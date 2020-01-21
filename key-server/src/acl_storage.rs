@@ -22,15 +22,11 @@ use ethabi::FunctionOutputDecoder;
 use blockchain::{SecretStoreChain, NewBlocksNotify, ContractAddress, BlockId};
 use types::{Error, ServerKeyId};
 
+pub use parity_secretstore_primitives::acl_storage::AclStorage;
+
 use_contract!(acl_storage, "res/acl_storage.json");
 
 const ACL_CHECKER_CONTRACT_REGISTRY_NAME: &'static str = "secretstore_acl_checker";
-
-/// ACL storage of Secret Store
-pub trait AclStorage: Send + Sync {
-	/// Check if requester can access document with hash `document`
-	fn check(&self, requester: Address, document: &ServerKeyId) -> Result<bool, Error>;
-}
 
 /// On-chain ACL storage implementation.
 pub struct OnChainAclStorage {

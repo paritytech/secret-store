@@ -1,0 +1,9 @@
+[package]
+name = "parity-secretstore-blockchain-service"
+version = "1.0.0"
+license = "GPL-3.0"
+authors = ["Parity Technologies <admin@parity.io>"]
+edition = "2018"
+
+[dependencies]
+link = { package = "parity-secretstore-blockchain-service", git = "https://github.com/svyatonik/secretstore-blockchain-service.git" }

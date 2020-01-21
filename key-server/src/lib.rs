@@ -35,6 +35,7 @@ extern crate tokio_io;
 extern crate tokio_service;
 extern crate url;
 extern crate jsonrpc_server_utils;
+extern crate parity_secretstore_primitives;
 
 extern crate ethabi_derive;
 #[macro_use]

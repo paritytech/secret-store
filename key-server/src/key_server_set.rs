@@ -25,6 +25,8 @@ use bytes::Bytes;
 use types::{Error, Public, NodeAddress, NodeId};
 use blockchain::{SecretStoreChain, NewBlocksNotify, SigningKeyPair, ContractAddress, BlockId};
 
+pub use parity_secretstore_primitives::key_server_set::{KeyServerSetSnapshot, KeyServerSetMigration, KeyServerSet};
+
 use_contract!(key_server, "res/key_server_set.json");
 
 /// Name of KeyServerSet contract in registry.
@@ -33,42 +35,6 @@ const KEY_SERVER_SET_CONTRACT_REGISTRY_NAME: &'static str = "secretstore_server_
 const MIGRATION_CONFIRMATIONS_REQUIRED: u64 = 5;
 /// Number of blocks before the same-migration transaction (be it start or confirmation) will be retried.
 const TRANSACTION_RETRY_INTERVAL_BLOCKS: u64 = 30;
-
-#[derive(Default, Debug, Clone, PartialEq)]
-/// Key Server Set state.
-pub struct KeyServerSetSnapshot {
-	/// Current set of key servers.
-	pub current_set: BTreeMap<NodeId, SocketAddr>,
-	/// New set of key servers.
-	pub new_set: BTreeMap<NodeId, SocketAddr>,
-	/// Current migration data.
-	pub migration: Option<KeyServerSetMigration>,
-}
-
-#[derive(Default, Debug, Clone, PartialEq)]
-/// Key server set migration.
-pub struct KeyServerSetMigration {
-	/// Migration id.
-	pub id: H256,
-	/// Migration set of key servers. It is the new_set at the moment of migration start.
-	pub set: BTreeMap<NodeId, SocketAddr>,
-	/// Master node of the migration process.
-	pub master: NodeId,
-	/// Is migration confirmed by this node?
-	pub is_confirmed: bool,
-}
-
-/// Key Server Set
-pub trait KeyServerSet: Send + Sync {
-	/// Is this node currently isolated from the set?
-	fn is_isolated(&self) -> bool;
-	/// Get server set state.
-	fn snapshot(&self) -> KeyServerSetSnapshot;
-	/// Start migration.
-	fn start_migration(&self, migration_id: H256);
-	/// Confirm migration.
-	fn confirm_migration(&self, migration_id: H256);
-}
 
 /// On-chain Key Server set implementation.
 pub struct OnChainKeyServerSet {

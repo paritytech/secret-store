@@ -1146,14 +1146,14 @@ pub mod tests {
 			// try to start decryption session => fails in initialization
 			assert_eq!(
 				client.new_decryption_session(
-					Default::default(), Default::default(), Default::default(), Some(Default::default()), false, false
+					Default::default(), Default::default(), Requester::Signature(Default::default()), Some(Default::default()), false, false
 				).map(|_| ()),
 				Err(Error::InvalidMessage));
 
 			// try to start generation session => fails in initialization
 			assert_eq!(
 				client.new_decryption_session(
-					Default::default(), Default::default(), Default::default(), Some(Default::default()), false, false
+					Default::default(), Default::default(), Requester::Signature(Default::default()), Some(Default::default()), false, false
 				).map(|_| ()),
 				Err(Error::InvalidMessage));
 

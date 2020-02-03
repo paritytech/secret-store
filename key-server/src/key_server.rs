@@ -79,7 +79,7 @@ impl ServerKeyGenerator for KeyServerImpl {
 		threshold: usize,
 	) -> Box<dyn Future<Item=Public, Error=Error> + Send> {
 		// recover requestor' address key from signature
-		let address = author.address(&key_id).map_err(Error::InsufficientRequesterData);
+		let address = author.address(&key_id);
 
 		// generate server key
 		return_session(address.and_then(|address| self.data.lock().cluster
@@ -94,7 +94,6 @@ impl ServerKeyGenerator for KeyServerImpl {
 		// recover requestor' public key from signature
 		let session_and_address = author
 			.address(&key_id)
-			.map_err(Error::InsufficientRequesterData)
 			.and_then(|address| self.data.lock().cluster.new_key_version_negotiation_session(key_id)
 				.map(|session| (session, address)));
 		let (session, address) = match session_and_address {
@@ -135,7 +134,7 @@ impl DocumentKeyServer for KeyServerImpl {
 		threshold: usize,
 	) -> Box<dyn Future<Item=EncryptedDocumentKey, Error=Error> + Send> {
 		// recover requestor' public key from signature
-		let public = result(author.public(&key_id).map_err(Error::InsufficientRequesterData));
+		let public = result(author.public(&key_id));
 
 		// generate server key
 		let data = self.data.clone();
@@ -177,7 +176,7 @@ impl DocumentKeyServer for KeyServerImpl {
 		requester: Requester,
 	) -> Box<dyn Future<Item=EncryptedDocumentKey, Error=Error> + Send> {
 		// recover requestor' public key from signature
-		let public = result(requester.public(&key_id).map_err(Error::InsufficientRequesterData));
+		let public = result(requester.public(&key_id));
 
 		// decrypt document key
 		let data = self.data.clone();
@@ -215,7 +214,7 @@ impl MessageSigner for KeyServerImpl {
 		message: MessageHash,
 	) -> Box<dyn Future<Item=EncryptedMessageSignature, Error=Error> + Send> {
 		// recover requestor' public key from signature
-		let public = result(requester.public(&key_id).map_err(Error::InsufficientRequesterData));
+		let public = result(requester.public(&key_id));
 
 		// sign message
 		let data = self.data.clone();
@@ -249,7 +248,7 @@ impl MessageSigner for KeyServerImpl {
 		message: MessageHash,
 	) -> Box<dyn Future<Item=EncryptedMessageSignature, Error=Error> + Send> {
 		// recover requestor' public key from signature
-		let public = result(requester.public(&key_id).map_err(Error::InsufficientRequesterData));
+		let public = result(requester.public(&key_id));
 
 		// sign message
 		let data = self.data.clone();

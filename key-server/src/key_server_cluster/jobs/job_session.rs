@@ -409,10 +409,18 @@ pub mod tests {
 		fn compute_response(&self, r: &BTreeMap<NodeId, u32>) -> Result<u32, Error> { Ok(r.values().fold(0, |v1, v2| v1 + v2)) }
 	}
 
-	#[derive(Default)]
 	pub struct DummyJobTransport<T, U> {
 		pub requests: Mutex<VecDeque<(NodeId, T)>>,
 		pub responses: Mutex<VecDeque<(NodeId, U)>>,
+	}
+
+	impl<T, U> Default for DummyJobTransport<T, U> {
+		fn default() -> Self {
+			DummyJobTransport {
+				requests: Mutex::new(VecDeque::new()),
+				responses: Mutex::new(VecDeque::new()),
+			}
+		}
 	}
 
 	impl<T, U> DummyJobTransport<T, U> {

@@ -39,3 +39,4 @@ parity-secretstore-primitives = { path = "../primitives" }
 env_logger = "0.5"
 tempdir = "0.3"
 kvdb-rocksdb = "0.3.0"
+parity-runtime = { git = "https://github.com/paritytech/parity-common", branch = "ParityRuntime", features = ["test-helpers"] }

@@ -16,8 +16,8 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use key_server_cluster::{Error, NodeId};
-use key_server_cluster::message::Message;
+use crate::key_server_cluster::{Error, NodeId};
+use crate::key_server_cluster::message::Message;
 
 /// Connection to the single node. Provides basic information about connected node and
 /// allows sending messages to this node.
@@ -64,8 +64,8 @@ pub mod tests {
 	use std::sync::Arc;
 	use std::sync::atomic::{AtomicBool, Ordering};
 	use parking_lot::Mutex;
-	use key_server_cluster::{Error, NodeId};
-	use key_server_cluster::message::Message;
+	use crate::key_server_cluster::{Error, NodeId};
+	use crate::key_server_cluster::message::Message;
 	use super::{ConnectionManager, Connection, ConnectionProvider};
 
 	/// Shared messages queue.

@@ -16,12 +16,12 @@
 
 use std::collections::{BTreeSet, BTreeMap};
 use ethereum_types::H256;
-use crypto::publickey::{Public, Secret};
-use crypto::DEFAULT_MAC;
-use crypto::publickey::ecies::encrypt;
-use key_server_cluster::{Error, NodeId, DocumentKeyShare, EncryptedDocumentKeyShadow};
-use key_server_cluster::math;
-use key_server_cluster::jobs::job_session::{JobPartialRequestAction, JobPartialResponseAction, JobExecutor};
+use parity_crypto::publickey::{Public, Secret};
+use parity_crypto::DEFAULT_MAC;
+use parity_crypto::publickey::ecies::encrypt;
+use crate::key_server_cluster::{Error, NodeId, DocumentKeyShare, EncryptedDocumentKeyShadow};
+use crate::key_server_cluster::math;
+use crate::key_server_cluster::jobs::job_session::{JobPartialRequestAction, JobPartialResponseAction, JobExecutor};
 
 /// Decryption job.
 pub struct DecryptionJob {

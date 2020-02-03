@@ -14,10 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
-use crypto::publickey::{Public, Secret, Signature, Random, Generator, ec_math_utils};
+use parity_crypto::publickey::{Public, Secret, Signature, Random, Generator, ec_math_utils};
 use ethereum_types::{H256, U256, BigEndianHash};
-use hash::keccak;
-use key_server_cluster::Error;
+use keccak_hash::keccak;
+use crate::key_server_cluster::Error;
 
 /// Encryption result.
 #[derive(Debug)]
@@ -533,7 +533,7 @@ pub fn compute_ecdsa_inversed_secret_coeff_from_shares(t: usize, id_numbers: &[S
 #[cfg(test)]
 pub mod tests {
 	use std::iter::once;
-	use crypto::publickey::{KeyPair, recover, verify_public};
+	use parity_crypto::publickey::{KeyPair, recover, verify_public};
 	use super::*;
 
 	#[derive(Clone)]

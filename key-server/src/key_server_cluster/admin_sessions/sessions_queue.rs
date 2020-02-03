@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 use std::collections::{VecDeque, BTreeSet};
-use key_server_cluster::{Error, SessionId, KeyStorage};
+use crate::key_server_cluster::{Error, SessionId, KeyStorage};
 
 /// Queue of share change sessions.
 pub struct SessionsQueue {

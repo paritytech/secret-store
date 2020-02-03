@@ -19,18 +19,19 @@ use std::sync::Arc;
 use futures::Oneshot;
 use parking_lot::Mutex;
 use ethereum_types::{Address, H256};
-use crypto::publickey::Secret;
-use key_server_cluster::{Error, AclStorage, DocumentKeyShare, NodeId, SessionId, Requester,
+use log::warn;
+use parity_crypto::publickey::Secret;
+use crate::key_server_cluster::{Error, AclStorage, DocumentKeyShare, NodeId, SessionId, Requester,
 	EncryptedDocumentKeyShadow, SessionMeta};
-use key_server_cluster::cluster::Cluster;
-use key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
-use key_server_cluster::message::{Message, DecryptionMessage, DecryptionConsensusMessage, RequestPartialDecryption,
+use crate::key_server_cluster::cluster::Cluster;
+use crate::key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
+use crate::key_server_cluster::message::{Message, DecryptionMessage, DecryptionConsensusMessage, RequestPartialDecryption,
 	PartialDecryption, DecryptionSessionError, DecryptionSessionCompleted, ConsensusMessage, InitializeConsensusSession,
 	ConfirmConsensusInitialization, DecryptionSessionDelegation, DecryptionSessionDelegationCompleted};
-use key_server_cluster::jobs::job_session::{JobSession, JobSessionState, JobTransport};
-use key_server_cluster::jobs::key_access_job::KeyAccessJob;
-use key_server_cluster::jobs::decryption_job::{PartialDecryptionRequest, PartialDecryptionResponse, DecryptionJob};
-use key_server_cluster::jobs::consensus_session::{ConsensusSessionParams, ConsensusSessionState, ConsensusSession};
+use crate::key_server_cluster::jobs::job_session::{JobSession, JobSessionState, JobTransport};
+use crate::key_server_cluster::jobs::key_access_job::KeyAccessJob;
+use crate::key_server_cluster::jobs::decryption_job::{PartialDecryptionRequest, PartialDecryptionResponse, DecryptionJob};
+use crate::key_server_cluster::jobs::consensus_session::{ConsensusSessionParams, ConsensusSessionState, ConsensusSession};
 
 /// Distributed decryption session.
 /// Based on "ECDKG: A Distributed Key Generation Protocol Based on Elliptic Curve Discrete Logarithm" paper:
@@ -819,8 +820,8 @@ impl JobTransport for DecryptionJobTransport {
 
 #[cfg(test)]
 pub fn create_default_decryption_session() -> Arc<SessionImpl> {
-	use acl_storage::DummyAclStorage;
-	use key_server_cluster::cluster::tests::DummyCluster;
+	use crate::acl_storage::DummyAclStorage;
+	use crate::key_server_cluster::cluster::tests::DummyCluster;
 	use ethereum_types::H512;
 
 	Arc::new(SessionImpl::new(SessionParams {
@@ -844,16 +845,16 @@ pub fn create_default_decryption_session() -> Arc<SessionImpl> {
 mod tests {
 	use std::sync::Arc;
 	use std::collections::{BTreeMap, VecDeque};
-	use acl_storage::DummyAclStorage;
-	use crypto::publickey::{KeyPair, Random, Generator, Public, Secret, public_to_address};
-	use key_server_cluster::{NodeId, DocumentKeyShare, DocumentKeyShareVersion, SessionId, Requester,
+	use crate::acl_storage::DummyAclStorage;
+	use parity_crypto::publickey::{KeyPair, Random, Generator, Public, Secret, public_to_address};
+	use crate::key_server_cluster::{NodeId, DocumentKeyShare, DocumentKeyShareVersion, SessionId, Requester,
 		Error, EncryptedDocumentKeyShadow, SessionMeta};
-	use key_server_cluster::cluster::tests::DummyCluster;
-	use key_server_cluster::cluster_sessions::ClusterSession;
-	use key_server_cluster::decryption_session::{SessionImpl, SessionParams};
-	use key_server_cluster::message::{self, Message, DecryptionMessage};
-	use key_server_cluster::math;
-	use key_server_cluster::jobs::consensus_session::ConsensusSessionState;
+	use crate::key_server_cluster::cluster::tests::DummyCluster;
+	use crate::key_server_cluster::cluster_sessions::ClusterSession;
+	use crate::key_server_cluster::decryption_session::{SessionImpl, SessionParams};
+	use crate::key_server_cluster::message::{self, Message, DecryptionMessage};
+	use crate::key_server_cluster::math;
+	use crate::key_server_cluster::jobs::consensus_session::ConsensusSessionState;
 	use ethereum_types::{H512, Address};
 	use std::str::FromStr;
 
@@ -905,7 +906,7 @@ mod tests {
 			cluster
 		}).collect();
 		let requester = Random.generate().unwrap();
-		let signature = Some(crypto::publickey::sign(requester.secret(), &SessionId::default()).unwrap());
+		let signature = Some(parity_crypto::publickey::sign(requester.secret(), &SessionId::default()).unwrap());
 		let sessions: Vec<_> = (0..5).map(|i| SessionImpl::new(SessionParams {
 			meta: SessionMeta {
 				id: session_id.clone(),
@@ -996,7 +997,7 @@ mod tests {
 			acl_storage: Arc::new(DummyAclStorage::default()),
 			cluster: Arc::new(DummyCluster::new(self_node_id.clone())),
 			nonce: 0,
-		}, Some(Requester::Signature(crypto::publickey::sign(Random.generate().unwrap().secret(), &SessionId::default()).unwrap()))) {
+		}, Some(Requester::Signature(parity_crypto::publickey::sign(Random.generate().unwrap().secret(), &SessionId::default()).unwrap()))) {
 			Ok(_) => (),
 			_ => panic!("unexpected"),
 		}
@@ -1020,7 +1021,7 @@ mod tests {
 			cluster: Arc::new(DummyCluster::new(self_node_id.clone())),
 			nonce: 0,
 		}, Some(Requester::Signature(
-			crypto::publickey::sign(Random.generate().unwrap().secret(), &SessionId::default()).unwrap()
+			parity_crypto::publickey::sign(Random.generate().unwrap().secret(), &SessionId::default()).unwrap()
 		))).unwrap().0;
 		assert_eq!(session.initialize(Default::default(), Default::default(), false, false), Err(Error::InvalidMessage));
 	}
@@ -1057,7 +1058,7 @@ mod tests {
 			cluster: Arc::new(DummyCluster::new(self_node_id.clone())),
 			nonce: 0,
 		}, Some(Requester::Signature(
-			crypto::publickey::sign(Random.generate().unwrap().secret(), &SessionId::default()).unwrap()
+			parity_crypto::publickey::sign(Random.generate().unwrap().secret(), &SessionId::default()).unwrap()
 		))).unwrap().0;
 		assert_eq!(session.initialize(Default::default(), Default::default(), false, false), Err(Error::ConsensusUnreachable));
 	}
@@ -1079,7 +1080,7 @@ mod tests {
 				session_nonce: 0,
 				origin: None,
 				message: message::ConsensusMessage::InitializeConsensusSession(message::InitializeConsensusSession {
-					requester: Requester::Signature(crypto::publickey::sign(
+					requester: Requester::Signature(parity_crypto::publickey::sign(
 						Random.generate().unwrap().secret(), &SessionId::default()).unwrap()).into(),
 					version: Default::default(),
 				}),
@@ -1095,7 +1096,7 @@ mod tests {
 				session_nonce: 0,
 				origin: None,
 				message: message::ConsensusMessage::InitializeConsensusSession(message::InitializeConsensusSession {
-					requester: Requester::Signature(crypto::publickey::sign(Random.generate().unwrap().secret(),
+					requester: Requester::Signature(parity_crypto::publickey::sign(Random.generate().unwrap().secret(),
 						&SessionId::default()).unwrap()).into(),
 					version: Default::default(),
 				}),
@@ -1120,7 +1121,7 @@ mod tests {
 				session_nonce: 0,
 				origin: None,
 				message: message::ConsensusMessage::InitializeConsensusSession(message::InitializeConsensusSession {
-					requester: Requester::Signature(crypto::publickey::sign(Random.generate().unwrap().secret(),
+					requester: Requester::Signature(parity_crypto::publickey::sign(Random.generate().unwrap().secret(),
 						&SessionId::default()).unwrap()).into(),
 					version: Default::default(),
 				}),
@@ -1312,8 +1313,8 @@ mod tests {
 		assert!(decrypted_secret.common_point.is_some());
 		assert!(decrypted_secret.decrypt_shadows.is_some());
 		// check that KS client is able to restore original secret
-		use crypto::DEFAULT_MAC;
-		use crypto::publickey::ecies::decrypt;
+		use parity_crypto::DEFAULT_MAC;
+		use parity_crypto::publickey::ecies::decrypt;
 		let decrypt_shadows: Vec<_> = decrypted_secret.decrypt_shadows.unwrap().into_iter()
 			.map(|c| Secret::copy_from_slice(&decrypt(key_pair.secret(), &DEFAULT_MAC, &c).unwrap()).unwrap())
 			.collect();
@@ -1456,8 +1457,8 @@ mod tests {
 		assert_eq!(1, sessions.iter().skip(1).filter(|s| s.broadcast_shadows().is_none()).count());
 
 		// 4 nodes must be able to recover original secret
-		use crypto::DEFAULT_MAC;
-		use crypto::publickey::ecies::decrypt;
+		use parity_crypto::DEFAULT_MAC;
+		use parity_crypto::publickey::ecies::decrypt;
 		let result = sessions[0].decrypted_secret().unwrap().unwrap();
 		assert_eq!(3, sessions.iter().skip(1).filter(|s| s.decrypted_secret() == Some(Ok(result.clone()))).count());
 		let decrypt_shadows: Vec<_> = result.decrypt_shadows.unwrap().into_iter()

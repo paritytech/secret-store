@@ -15,12 +15,12 @@
 // along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::io;
-use futures::{Poll, Future, Async};
+use futures::{try_ready, Poll, Future, Async};
 use tokio_io::AsyncRead;
-use crypto::publickey::KeyPair;
-use key_server_cluster::Error;
-use key_server_cluster::message::Message;
-use key_server_cluster::io::{read_header, ReadHeader, read_payload, read_encrypted_payload, ReadPayload};
+use parity_crypto::publickey::KeyPair;
+use crate::key_server_cluster::Error;
+use crate::key_server_cluster::message::Message;
+use crate::key_server_cluster::io::{read_header, ReadHeader, read_payload, read_encrypted_payload, ReadPayload};
 
 /// Create future for read single message from the stream.
 pub fn read_message<A>(a: A) -> ReadMessage<A> where A: AsyncRead {

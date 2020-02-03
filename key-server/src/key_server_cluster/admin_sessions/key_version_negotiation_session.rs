@@ -17,18 +17,19 @@
 use std::sync::Arc;
 use std::collections::{BTreeSet, BTreeMap};
 use ethereum_types::{Address, H256};
-use crypto::publickey::Secret;
+use log::warn;
+use parity_crypto::publickey::Secret;
 use futures::Oneshot;
 use parking_lot::Mutex;
-use key_server_cluster::{Error, SessionId, NodeId, DocumentKeyShare};
-use key_server_cluster::cluster::Cluster;
-use key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
-use key_server_cluster::decryption_session::SessionImpl as DecryptionSession;
-use key_server_cluster::signing_session_ecdsa::SessionImpl as EcdsaSigningSession;
-use key_server_cluster::signing_session_schnorr::SessionImpl as SchnorrSigningSession;
-use key_server_cluster::message::{Message, KeyVersionNegotiationMessage, RequestKeyVersions,
+use crate::key_server_cluster::{Error, SessionId, NodeId, DocumentKeyShare};
+use crate::key_server_cluster::cluster::Cluster;
+use crate::key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
+use crate::key_server_cluster::decryption_session::SessionImpl as DecryptionSession;
+use crate::key_server_cluster::signing_session_ecdsa::SessionImpl as EcdsaSigningSession;
+use crate::key_server_cluster::signing_session_schnorr::SessionImpl as SchnorrSigningSession;
+use crate::key_server_cluster::message::{Message, KeyVersionNegotiationMessage, RequestKeyVersions,
 	KeyVersions, KeyVersionsError, FailedKeyVersionContinueAction, CommonKeyData};
-use key_server_cluster::admin_sessions::ShareChangeSessionMeta;
+use crate::key_server_cluster::admin_sessions::ShareChangeSessionMeta;
 
 // TODO [Opt]: change sessions so that versions are sent by chunks.
 /// Number of versions sent in single message.
@@ -617,16 +618,16 @@ mod tests {
 	use std::sync::Arc;
 	use std::collections::{VecDeque, BTreeMap, BTreeSet};
 	use ethereum_types::{H512, H160, Address};
-	use crypto::publickey::public_to_address;
-	use key_server_cluster::{NodeId, SessionId, Error, KeyStorage, DummyKeyStorage,
+	use parity_crypto::publickey::public_to_address;
+	use crate::key_server_cluster::{NodeId, SessionId, Error, KeyStorage, DummyKeyStorage,
 		DocumentKeyShare, DocumentKeyShareVersion};
-	use key_server_cluster::math;
-	use key_server_cluster::cluster::Cluster;
-	use key_server_cluster::cluster::tests::DummyCluster;
-	use key_server_cluster::cluster_sessions::ClusterSession;
-	use key_server_cluster::admin_sessions::ShareChangeSessionMeta;
-	use key_server_cluster::decryption_session::create_default_decryption_session;
-	use key_server_cluster::message::{
+	use crate::key_server_cluster::math;
+	use crate::key_server_cluster::cluster::Cluster;
+	use crate::key_server_cluster::cluster::tests::DummyCluster;
+	use crate::key_server_cluster::cluster_sessions::ClusterSession;
+	use crate::key_server_cluster::admin_sessions::ShareChangeSessionMeta;
+	use crate::key_server_cluster::decryption_session::create_default_decryption_session;
+	use crate::key_server_cluster::message::{
 		Message, KeyVersionNegotiationMessage, RequestKeyVersions,
 		CommonKeyData, KeyVersions,
 	};

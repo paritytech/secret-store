@@ -18,15 +18,16 @@ use std::collections::{BTreeSet, BTreeMap};
 use std::collections::btree_map::Entry;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use log::trace;
 use ethereum_types::H256;
-use crypto::publickey::Public;
-use key_server_cluster::{KeyServerSet, KeyServerSetSnapshot};
-use key_server_cluster::cluster::{ClusterConfiguration, ServersSetChangeParams};
-use key_server_cluster::cluster_sessions::AdminSession;
-use key_server_cluster::cluster_connections::{Connection};
-use key_server_cluster::cluster_connections_net::{NetConnectionsContainer};
-use types::{Error, NodeId};
-use blockchain::SigningKeyPair;
+use parity_crypto::publickey::Public;
+use crate::key_server_cluster::{KeyServerSet, KeyServerSetSnapshot};
+use crate::key_server_cluster::cluster::{ClusterConfiguration, ServersSetChangeParams};
+use crate::key_server_cluster::cluster_sessions::AdminSession;
+use crate::key_server_cluster::cluster_connections::{Connection};
+use crate::key_server_cluster::cluster_connections_net::{NetConnectionsContainer};
+use crate::types::{Error, NodeId};
+use crate::blockchain::SigningKeyPair;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 /// Describes which maintain() call is required.
@@ -215,9 +216,9 @@ fn select_nodes_to_disconnect(current_set: &BTreeMap<NodeId, SocketAddr>, new_se
 mod tests {
 	use std::collections::BTreeSet;
 	use std::sync::Arc;
-	use crypto::publickey::{Random, Generator};
-	use key_server_cluster::{MapKeyServerSet, PlainNodeKeyPair, KeyServerSetSnapshot, KeyServerSetMigration};
-	use key_server_cluster::cluster_connections_net::NetConnectionsContainer;
+	use parity_crypto::publickey::{Random, Generator};
+	use crate::key_server_cluster::{MapKeyServerSet, PlainNodeKeyPair, KeyServerSetSnapshot, KeyServerSetMigration};
+	use crate::key_server_cluster::cluster_connections_net::NetConnectionsContainer;
 	use super::{Maintain, TriggerConnections, ConnectionsAction, ConnectionTrigger, SimpleConnectionTrigger,
 		select_nodes_to_disconnect, adjust_connections};
 

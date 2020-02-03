@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
-use crypto::publickey::{KeyPair, Public, Signature, Error as EthKeyError, sign, public_to_address};
+use parity_crypto::publickey::{KeyPair, Public, Signature, Error as EthKeyError, sign, public_to_address};
 use ethereum_types::{H256, Address};
-use blockchain::SigningKeyPair;
+use crate::blockchain::SigningKeyPair;
 
 pub struct PlainNodeKeyPair {
 	key_pair: KeyPair,

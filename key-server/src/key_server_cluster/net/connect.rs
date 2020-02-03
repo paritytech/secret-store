@@ -19,12 +19,12 @@ use std::collections::BTreeSet;
 use std::io;
 use std::time::Duration;
 use std::net::SocketAddr;
-use futures::{Future, Poll, Async};
+use futures::{try_ready, Future, Poll, Async};
 use tokio::net::{TcpStream, tcp::ConnectFuture};
-use blockchain::SigningKeyPair;
-use key_server_cluster::{Error, NodeId};
-use key_server_cluster::io::{handshake, Handshake, Deadline, deadline};
-use key_server_cluster::net::Connection;
+use crate::blockchain::SigningKeyPair;
+use crate::key_server_cluster::{Error, NodeId};
+use crate::key_server_cluster::io::{handshake, Handshake, Deadline, deadline};
+use crate::key_server_cluster::net::Connection;
 
 /// Create future for connecting to other node.
 pub fn connect(address: &SocketAddr, self_key_pair: Arc<dyn SigningKeyPair>, trusted_nodes: BTreeSet<NodeId>) -> Deadline<Connect> {

@@ -18,16 +18,18 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use ethabi::RawLog;
 use ethabi::FunctionOutputDecoder;
-use crypto::publickey::{Public, public_to_address};
-use hash::keccak;
-use bytes::Bytes;
+use lazy_static::lazy_static;
+use log::{trace, warn};
+use parity_crypto::publickey::{Public, public_to_address};
+use keccak_hash::keccak;
+use parity_bytes::Bytes;
 use ethereum_types::{H256, U256, Address, H512};
-use listener::ApiMask;
-use listener::service_contract_listener::ServiceTask;
-use blockchain::{SecretStoreChain, Filter, SigningKeyPair, ContractAddress, BlockId};
-use ServerKeyId;
+use crate::listener::ApiMask;
+use crate::listener::service_contract_listener::ServiceTask;
+use crate::blockchain::{SecretStoreChain, Filter, SigningKeyPair, ContractAddress, BlockId};
+use crate::ServerKeyId;
 
-use_contract!(service, "res/service.json");
+ethabi_contract::use_contract!(service, "res/service.json");
 
 /// Name of the general SecretStore contract in the registry.
 pub const SERVICE_CONTRACT_REGISTRY_NAME: &'static str = "secretstore_service";
@@ -723,11 +725,11 @@ fn serialize_threshold(threshold: usize) -> Result<U256, String> {
 #[cfg(test)]
 pub mod tests {
 	use parking_lot::Mutex;
-	use bytes::Bytes;
-	use crypto::publickey::Public;
+	use parity_bytes::Bytes;
+	use parity_crypto::publickey::Public;
 	use ethereum_types::Address;
-	use listener::service_contract_listener::ServiceTask;
-	use {ServerKeyId};
+	use crate::listener::service_contract_listener::ServiceTask;
+	use crate::{ServerKeyId};
 	use super::ServiceContract;
 
 	#[derive(Default)]

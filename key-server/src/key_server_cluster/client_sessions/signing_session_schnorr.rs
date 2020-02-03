@@ -18,21 +18,22 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use futures::Oneshot;
 use parking_lot::Mutex;
-use crypto::publickey::{Public, Secret};
+use parity_crypto::publickey::{Public, Secret};
 use ethereum_types::H256;
-use key_server_cluster::{Error, NodeId, SessionId, Requester, SessionMeta, AclStorage, DocumentKeyShare};
-use key_server_cluster::cluster::{Cluster};
-use key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
-use key_server_cluster::generation_session::{SessionImpl as GenerationSession, SessionParams as GenerationSessionParams,
+use log::warn;
+use crate::key_server_cluster::{Error, NodeId, SessionId, Requester, SessionMeta, AclStorage, DocumentKeyShare};
+use crate::key_server_cluster::cluster::{Cluster};
+use crate::key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
+use crate::key_server_cluster::generation_session::{SessionImpl as GenerationSession, SessionParams as GenerationSessionParams,
 	SessionState as GenerationSessionState};
-use key_server_cluster::message::{Message, SchnorrSigningMessage, SchnorrSigningConsensusMessage, SchnorrSigningGenerationMessage,
+use crate::key_server_cluster::message::{Message, SchnorrSigningMessage, SchnorrSigningConsensusMessage, SchnorrSigningGenerationMessage,
 	SchnorrRequestPartialSignature, SchnorrPartialSignature, SchnorrSigningSessionCompleted, GenerationMessage,
 	ConsensusMessage, SchnorrSigningSessionError, InitializeConsensusSession, ConfirmConsensusInitialization,
 	SchnorrSigningSessionDelegation, SchnorrSigningSessionDelegationCompleted};
-use key_server_cluster::jobs::job_session::JobTransport;
-use key_server_cluster::jobs::key_access_job::KeyAccessJob;
-use key_server_cluster::jobs::signing_job_schnorr::{SchnorrPartialSigningRequest, SchnorrPartialSigningResponse, SchnorrSigningJob};
-use key_server_cluster::jobs::consensus_session::{ConsensusSessionParams, ConsensusSessionState, ConsensusSession};
+use crate::key_server_cluster::jobs::job_session::JobTransport;
+use crate::key_server_cluster::jobs::key_access_job::KeyAccessJob;
+use crate::key_server_cluster::jobs::signing_job_schnorr::{SchnorrPartialSigningRequest, SchnorrPartialSigningResponse, SchnorrSigningJob};
+use crate::key_server_cluster::jobs::consensus_session::{ConsensusSessionParams, ConsensusSessionState, ConsensusSession};
 
 /// Distributed Schnorr-signing session.
 /// Based on "Efficient Multi-Party Digital Signature using Adaptive Secret Sharing for Low-Power Devices in Wireless Network" paper.
@@ -819,16 +820,16 @@ mod tests {
 	use std::str::FromStr;
 	use std::collections::BTreeMap;
 	use ethereum_types::{Address, H256};
-	use crypto::publickey::{Random, Generator, Public, Secret, public_to_address};
-	use acl_storage::DummyAclStorage;
-	use key_server_cluster::{SessionId, Requester, SessionMeta, Error, KeyStorage};
-	use key_server_cluster::cluster::tests::MessageLoop as ClusterMessageLoop;
-	use key_server_cluster::generation_session::tests::MessageLoop as GenerationMessageLoop;
-	use key_server_cluster::math;
-	use key_server_cluster::message::{SchnorrSigningMessage, SchnorrSigningConsensusMessage,
+	use parity_crypto::publickey::{Random, Generator, Public, Secret, public_to_address};
+	use crate::acl_storage::DummyAclStorage;
+	use crate::key_server_cluster::{SessionId, Requester, SessionMeta, Error, KeyStorage};
+	use crate::key_server_cluster::cluster::tests::MessageLoop as ClusterMessageLoop;
+	use crate::key_server_cluster::generation_session::tests::MessageLoop as GenerationMessageLoop;
+	use crate::key_server_cluster::math;
+	use crate::key_server_cluster::message::{SchnorrSigningMessage, SchnorrSigningConsensusMessage,
 		ConsensusMessage, ConfirmConsensusInitialization, SchnorrSigningGenerationMessage, GenerationMessage,
 		ConfirmInitialization, InitializeSession, SchnorrRequestPartialSignature};
-	use key_server_cluster::signing_session_schnorr::{SessionImpl, SessionState, SessionParams};
+	use crate::key_server_cluster::signing_session_schnorr::{SessionImpl, SessionState, SessionParams};
 
 	#[derive(Debug)]
 	pub struct MessageLoop(pub ClusterMessageLoop);
@@ -842,7 +843,7 @@ mod tests {
 		}
 
 		pub fn into_session(&self, at_node: usize) -> SessionImpl {
-			let requester = Some(Requester::Signature(crypto::publickey::sign(Random.generate().unwrap().secret(),
+			let requester = Some(Requester::Signature(parity_crypto::publickey::sign(Random.generate().unwrap().secret(),
 				&SessionId::default()).unwrap()));
 			SessionImpl::new(SessionParams {
 				meta: SessionMeta {
@@ -864,7 +865,7 @@ mod tests {
 		pub fn init_with_version(self, key_version: Option<H256>) -> Result<(Self, Public, H256), Error> {
 			let message_hash = H256::random();
 			let requester = Random.generate().unwrap();
-			let signature = crypto::publickey::sign(requester.secret(), &SessionId::default()).unwrap();
+			let signature = parity_crypto::publickey::sign(requester.secret(), &SessionId::default()).unwrap();
 			self.0.cluster(0).client().new_schnorr_signing_session(
 				Default::default(),
 				signature.into(),

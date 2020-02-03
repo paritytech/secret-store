@@ -35,15 +35,15 @@
 use std::io;
 use std::sync::Arc;
 use std::collections::BTreeSet;
-use futures::{Future, Poll, Async};
+use futures::{try_ready, Future, Poll, Async};
 use tokio_io::{AsyncRead, AsyncWrite};
-use crypto::publickey::ecdh::agree;
-use crypto::publickey::{Random, Generator, KeyPair, Public, Signature, verify_public, sign, recover};
+use parity_crypto::publickey::ecdh::agree;
+use parity_crypto::publickey::{Random, Generator, KeyPair, Public, Signature, verify_public, sign, recover};
 use ethereum_types::H256;
-use blockchain::SigningKeyPair;
-use key_server_cluster::{NodeId, Error};
-use key_server_cluster::message::{Message, ClusterMessage, NodePublicKey, NodePrivateKeySignature};
-use key_server_cluster::io::{write_message, write_encrypted_message, WriteMessage, ReadMessage,
+use crate::blockchain::SigningKeyPair;
+use crate::key_server_cluster::{NodeId, Error};
+use crate::key_server_cluster::message::{Message, ClusterMessage, NodePublicKey, NodePrivateKeySignature};
+use crate::key_server_cluster::io::{write_message, write_encrypted_message, WriteMessage, ReadMessage,
 	read_message, read_encrypted_message, fix_shared_key};
 
 /// Start handshake procedure with another node from the cluster.
@@ -318,11 +318,11 @@ mod tests {
 	use std::sync::Arc;
 	use std::collections::BTreeSet;
 	use futures::Future;
-	use crypto::publickey::{Random, Generator, sign};
+	use parity_crypto::publickey::{Random, Generator, sign};
 	use ethereum_types::H256;
-	use key_server_cluster::PlainNodeKeyPair;
-	use key_server_cluster::io::message::tests::TestIo;
-	use key_server_cluster::message::{Message, ClusterMessage, NodePublicKey, NodePrivateKeySignature};
+	use crate::key_server_cluster::PlainNodeKeyPair;
+	use crate::key_server_cluster::io::message::tests::TestIo;
+	use crate::key_server_cluster::message::{Message, ClusterMessage, NodePublicKey, NodePrivateKeySignature};
 	use super::{handshake_with_init_data, accept_handshake, HandshakeResult};
 
 	fn prepare_test_io() -> (H256, TestIo) {

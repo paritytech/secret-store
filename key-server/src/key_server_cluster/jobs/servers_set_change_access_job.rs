@@ -15,11 +15,11 @@
 // along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::{BTreeSet, BTreeMap};
-use crypto::publickey::{Public, Signature, recover};
+use parity_crypto::publickey::{Public, Signature, recover};
 use tiny_keccak::Keccak;
-use key_server_cluster::{Error, NodeId, SessionId};
-use key_server_cluster::message::{InitializeConsensusSessionWithServersSet, InitializeConsensusSessionOfShareAdd};
-use key_server_cluster::jobs::job_session::{JobPartialResponseAction, JobPartialRequestAction, JobExecutor};
+use crate::key_server_cluster::{Error, NodeId, SessionId};
+use crate::key_server_cluster::message::{InitializeConsensusSessionWithServersSet, InitializeConsensusSessionOfShareAdd};
+use crate::key_server_cluster::jobs::job_session::{JobPartialResponseAction, JobPartialRequestAction, JobExecutor};
 
 /// Purpose of this job is to check if requestor is administrator of SecretStore (i.e. it have access to change key servers set).
 pub struct ServersSetChangeAccessJob {

@@ -15,9 +15,9 @@
 // along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::BTreeSet;
-use key_server_cluster::{Error, NodeId, SessionMeta, Requester};
-use key_server_cluster::message::ConsensusMessage;
-use key_server_cluster::jobs::job_session::{JobSession, JobSessionState, JobTransport, JobExecutor, JobPartialRequestAction};
+use crate::key_server_cluster::{Error, NodeId, SessionMeta, Requester};
+use crate::key_server_cluster::message::ConsensusMessage;
+use crate::key_server_cluster::jobs::job_session::{JobSession, JobSessionState, JobTransport, JobExecutor, JobPartialRequestAction};
 
 /// Consensus session state.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -367,11 +367,11 @@ impl<ConsensusExecutor, ConsensusTransport, ComputationExecutor, ComputationTran
 #[cfg(test)]
 mod tests {
 	use std::sync::Arc;
-	use crypto::publickey::{KeyPair, Random, Generator, sign, public_to_address};
-	use key_server_cluster::{Error, NodeId, SessionId, Requester, DummyAclStorage};
-	use key_server_cluster::message::{ConsensusMessage, InitializeConsensusSession, ConfirmConsensusInitialization};
-	use key_server_cluster::jobs::job_session::tests::{make_master_session_meta, make_slave_session_meta, SquaredSumJobExecutor, DummyJobTransport};
-	use key_server_cluster::jobs::key_access_job::KeyAccessJob;
+	use parity_crypto::publickey::{KeyPair, Random, Generator, sign, public_to_address};
+	use crate::key_server_cluster::{Error, NodeId, SessionId, Requester, DummyAclStorage};
+	use crate::key_server_cluster::message::{ConsensusMessage, InitializeConsensusSession, ConfirmConsensusInitialization};
+	use crate::key_server_cluster::jobs::job_session::tests::{make_master_session_meta, make_slave_session_meta, SquaredSumJobExecutor, DummyJobTransport};
+	use crate::key_server_cluster::jobs::key_access_job::KeyAccessJob;
 	use super::{ConsensusSession, ConsensusSessionParams, ConsensusSessionState};
 
 	type SquaredSumConsensusSession = ConsensusSession<KeyAccessJob, DummyJobTransport<Requester, bool>, SquaredSumJobExecutor, DummyJobTransport<u32, u32>>;

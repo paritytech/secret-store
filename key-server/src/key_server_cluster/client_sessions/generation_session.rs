@@ -20,12 +20,13 @@ use std::sync::Arc;
 use futures::Oneshot;
 use parking_lot::Mutex;
 use ethereum_types::Address;
-use crypto::publickey::{Public, Secret};
-use key_server_cluster::{Error, NodeId, SessionId, KeyStorage, DocumentKeyShare, DocumentKeyShareVersion};
-use key_server_cluster::math;
-use key_server_cluster::cluster::Cluster;
-use key_server_cluster::cluster_sessions::{ClusterSession, CompletionSignal};
-use key_server_cluster::message::{Message, GenerationMessage, InitializeSession, ConfirmInitialization, CompleteInitialization,
+use log::warn;
+use parity_crypto::publickey::{Public, Secret};
+use crate::key_server_cluster::{Error, NodeId, SessionId, KeyStorage, DocumentKeyShare, DocumentKeyShareVersion};
+use crate::key_server_cluster::math;
+use crate::key_server_cluster::cluster::Cluster;
+use crate::key_server_cluster::cluster_sessions::{ClusterSession, CompletionSignal};
+use crate::key_server_cluster::message::{Message, GenerationMessage, InitializeSession, ConfirmInitialization, CompleteInitialization,
 	KeysDissemination, PublicKeyShare, SessionError, SessionCompleted};
 
 /// Distributed key generation session.
@@ -951,15 +952,15 @@ fn check_threshold(threshold: usize, nodes: &BTreeSet<NodeId>) -> Result<(), Err
 pub mod tests {
 	use std::sync::Arc;
 	use ethereum_types::H256;
-	use crypto::publickey::{Random, Generator, KeyPair, Secret};
-	use key_server_cluster::{NodeId, Error, KeyStorage};
-	use key_server_cluster::message::{self, Message, GenerationMessage, KeysDissemination,
+	use parity_crypto::publickey::{Random, Generator, KeyPair, Secret};
+	use crate::key_server_cluster::{NodeId, Error, KeyStorage};
+	use crate::key_server_cluster::message::{self, Message, GenerationMessage, KeysDissemination,
 		PublicKeyShare, ConfirmInitialization};
-	use key_server_cluster::cluster::tests::{MessageLoop as ClusterMessageLoop, make_clusters_and_preserve_sessions};
-	use key_server_cluster::cluster_sessions::ClusterSession;
-	use key_server_cluster::generation_session::{SessionImpl, SessionState};
-	use key_server_cluster::math;
-	use key_server_cluster::math::tests::do_encryption_and_decryption;
+	use crate::key_server_cluster::cluster::tests::{MessageLoop as ClusterMessageLoop, make_clusters_and_preserve_sessions};
+	use crate::key_server_cluster::cluster_sessions::ClusterSession;
+	use crate::key_server_cluster::generation_session::{SessionImpl, SessionState};
+	use crate::key_server_cluster::math;
+	use crate::key_server_cluster::math::tests::do_encryption_and_decryption;
 
 	#[derive(Debug)]
 	pub struct MessageLoop(pub ClusterMessageLoop);

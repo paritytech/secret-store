@@ -19,12 +19,13 @@ use std::collections::{HashMap, HashSet};
 use parking_lot::{Mutex, RwLock};
 use ethereum_types::Address;
 use ethabi::FunctionOutputDecoder;
-use blockchain::{SecretStoreChain, NewBlocksNotify, ContractAddress, BlockId};
-use types::{Error, ServerKeyId};
+use log::trace;
+use crate::blockchain::{SecretStoreChain, NewBlocksNotify, ContractAddress, BlockId};
+use crate::types::{Error, ServerKeyId};
 
 pub use parity_secretstore_primitives::acl_storage::AclStorage;
 
-use_contract!(acl_storage, "res/acl_storage.json");
+ethabi_contract::use_contract!(acl_storage, "res/acl_storage.json");
 
 const ACL_CHECKER_CONTRACT_REGISTRY_NAME: &'static str = "secretstore_acl_checker";
 

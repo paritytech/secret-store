@@ -19,10 +19,11 @@ use std::sync::Arc;
 use serde_json;
 use tiny_keccak::Keccak;
 use ethereum_types::{H256, Address};
-use crypto::publickey::{Secret, Public};
+use parity_crypto::publickey::{Secret, Public};
+use serde::{Serialize, Deserialize};
 use kvdb::KeyValueDB;
-use types::{Error, ServerKeyId, NodeId};
-use serialization::{SerializablePublic, SerializableSecret, SerializableH256, SerializableAddress};
+use crate::types::{Error, ServerKeyId, NodeId};
+use crate::serialization::{SerializablePublic, SerializableSecret, SerializableH256, SerializableAddress};
 
 /// Encrypted key share, stored by key storage on the single key server.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -270,9 +271,9 @@ pub mod tests {
 	use std::sync::Arc;
 	use parking_lot::RwLock;
 	use tempdir::TempDir;
-	use crypto::publickey::{Random, Generator, Public};
+	use parity_crypto::publickey::{Random, Generator, Public};
 	use kvdb_rocksdb::{Database, DatabaseConfig};
-	use types::{Error, ServerKeyId};
+	use crate::types::{Error, ServerKeyId};
 	use super::{KeyStorage, PersistentKeyStorage, DocumentKeyShare, DocumentKeyShareVersion};
 
 	/// In-memory document encryption keys storage

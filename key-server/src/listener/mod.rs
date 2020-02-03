@@ -23,8 +23,8 @@ mod tasks_queue;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use futures::Future;
-use traits::{ServerKeyGenerator, DocumentKeyServer, MessageSigner, AdminSessionsServer, KeyServer};
-use types::{Error, Public, MessageHash, EncryptedMessageSignature, RequestSignature, ServerKeyId,
+use crate::traits::{ServerKeyGenerator, DocumentKeyServer, MessageSigner, AdminSessionsServer, KeyServer};
+use crate::types::{Error, Public, MessageHash, EncryptedMessageSignature, RequestSignature, ServerKeyId,
 	EncryptedDocumentKey, EncryptedDocumentKeyShadow, NodeId, Requester};
 
 /// Available API mask.

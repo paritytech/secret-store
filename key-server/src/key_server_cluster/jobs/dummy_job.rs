@@ -15,8 +15,8 @@
 // along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::{BTreeMap, BTreeSet};
-use key_server_cluster::{Error, NodeId};
-use key_server_cluster::jobs::job_session::{JobExecutor, JobTransport, JobPartialRequestAction, JobPartialResponseAction};
+use crate::key_server_cluster::{Error, NodeId};
+use crate::key_server_cluster::jobs::job_session::{JobExecutor, JobTransport, JobPartialRequestAction, JobPartialResponseAction};
 
 /// No-work job to use in generics (TODO [Refac]: create separate ShareChangeConsensusSession && remove this)
 pub struct DummyJob;

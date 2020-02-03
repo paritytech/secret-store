@@ -16,23 +16,22 @@
 
 use std::collections::BTreeMap;
 
-use blockchain::ContractAddress;
-use {bytes, ethereum_types};
+use crate::blockchain::ContractAddress;
 
 /// Node id.
-pub type NodeId = crypto::publickey::Public;
+pub type NodeId = parity_crypto::publickey::Public;
 /// Server key id. When key is used to encrypt document, it could be document contents hash.
 pub type ServerKeyId = ethereum_types::H256;
 /// Encrypted document key type.
-pub type EncryptedDocumentKey = bytes::Bytes;
+pub type EncryptedDocumentKey = parity_bytes::Bytes;
 /// Message hash.
 pub type MessageHash = ethereum_types::H256;
 /// Message signature.
-pub type EncryptedMessageSignature = bytes::Bytes;
+pub type EncryptedMessageSignature = parity_bytes::Bytes;
 /// Request signature type.
-pub type RequestSignature = crypto::publickey::Signature;
+pub type RequestSignature = parity_crypto::publickey::Signature;
 /// Public key type.
-pub use crypto::publickey::Public;
+pub use parity_crypto::publickey::Public;
 
 /// Secret store configuration
 #[derive(Debug, Clone)]
@@ -72,7 +71,7 @@ pub struct ClusterConfiguration {
 	/// This node address.
 	pub listener_address: NodeAddress,
 	/// All cluster nodes addresses.
-	pub nodes: BTreeMap<crypto::publickey::Public, NodeAddress>,
+	pub nodes: BTreeMap<parity_crypto::publickey::Public, NodeAddress>,
 	/// Key Server Set contract address. If None, servers from 'nodes' map are used.
 	pub key_server_set_contract_address: Option<ContractAddress>,
 	/// Allow outbound connections to 'higher' nodes.
@@ -89,9 +88,9 @@ pub struct ClusterConfiguration {
 #[derive(Clone, Debug, PartialEq)]
 pub struct EncryptedDocumentKeyShadow {
 	/// Decrypted secret point. It is partially decrypted if shadow decryption was requested.
-	pub decrypted_secret: crypto::publickey::Public,
+	pub decrypted_secret: parity_crypto::publickey::Public,
 	/// Shared common point.
-	pub common_point: Option<crypto::publickey::Public>,
+	pub common_point: Option<parity_crypto::publickey::Public>,
 	/// If shadow decryption was requested: shadow decryption coefficients, encrypted with requestor public.
 	pub decrypt_shadows: Option<Vec<Vec<u8>>>,
 }

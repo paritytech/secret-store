@@ -21,7 +21,7 @@ pub mod share_change_session;
 
 mod sessions_queue;
 
-use key_server_cluster::{SessionId, NodeId, SessionMeta, Error};
+use crate::key_server_cluster::{SessionId, NodeId, SessionMeta, Error};
 
 /// Share change session metadata.
 #[derive(Debug, Clone)]

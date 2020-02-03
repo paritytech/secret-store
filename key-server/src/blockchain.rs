@@ -15,10 +15,10 @@
 // along with Parity Ethereum.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
-use bytes::Bytes;
+use parity_bytes::Bytes;
 use ethereum_types::{H256, Address, Public};
 use ethabi::RawLog;
-use crypto::publickey::{Signature, Error as EthKeyError};
+use parity_crypto::publickey::{Signature, Error as EthKeyError};
 
 /// Type for block number.
 /// Duplicated from ethcore types

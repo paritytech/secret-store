@@ -19,26 +19,27 @@ use std::sync::{Arc, Weak};
 use std::sync::atomic::AtomicBool;
 use std::collections::{VecDeque, BTreeMap, BTreeSet};
 use futures::{oneshot, Oneshot, Complete, Future};
+use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock, Condvar};
 use ethereum_types::H256;
-use crypto::publickey::Secret;
-use blockchain::SigningKeyPair;
-use key_server_cluster::{Error, NodeId, SessionId};
-use key_server_cluster::cluster::{Cluster, ClusterConfiguration, ClusterView};
-use key_server_cluster::cluster_connections::ConnectionProvider;
-use key_server_cluster::connection_trigger::ServersSetChangeSessionCreatorConnector;
-use key_server_cluster::message::{self, Message};
-use key_server_cluster::generation_session::{SessionImpl as GenerationSessionImpl};
-use key_server_cluster::decryption_session::{SessionImpl as DecryptionSessionImpl};
-use key_server_cluster::encryption_session::{SessionImpl as EncryptionSessionImpl};
-use key_server_cluster::signing_session_ecdsa::{SessionImpl as EcdsaSigningSessionImpl};
-use key_server_cluster::signing_session_schnorr::{SessionImpl as SchnorrSigningSessionImpl};
-use key_server_cluster::share_add_session::{SessionImpl as ShareAddSessionImpl, IsolatedSessionTransport as ShareAddTransport};
-use key_server_cluster::servers_set_change_session::{SessionImpl as ServersSetChangeSessionImpl};
-use key_server_cluster::key_version_negotiation_session::{SessionImpl as KeyVersionNegotiationSessionImpl,
+use parity_crypto::publickey::Secret;
+use crate::blockchain::SigningKeyPair;
+use crate::key_server_cluster::{Error, NodeId, SessionId};
+use crate::key_server_cluster::cluster::{Cluster, ClusterConfiguration, ClusterView};
+use crate::key_server_cluster::cluster_connections::ConnectionProvider;
+use crate::key_server_cluster::connection_trigger::ServersSetChangeSessionCreatorConnector;
+use crate::key_server_cluster::message::{self, Message};
+use crate::key_server_cluster::generation_session::{SessionImpl as GenerationSessionImpl};
+use crate::key_server_cluster::decryption_session::{SessionImpl as DecryptionSessionImpl};
+use crate::key_server_cluster::encryption_session::{SessionImpl as EncryptionSessionImpl};
+use crate::key_server_cluster::signing_session_ecdsa::{SessionImpl as EcdsaSigningSessionImpl};
+use crate::key_server_cluster::signing_session_schnorr::{SessionImpl as SchnorrSigningSessionImpl};
+use crate::key_server_cluster::share_add_session::{SessionImpl as ShareAddSessionImpl, IsolatedSessionTransport as ShareAddTransport};
+use crate::key_server_cluster::servers_set_change_session::{SessionImpl as ServersSetChangeSessionImpl};
+use crate::key_server_cluster::key_version_negotiation_session::{SessionImpl as KeyVersionNegotiationSessionImpl,
 	IsolatedSessionTransport as VersionNegotiationTransport};
 
-use key_server_cluster::cluster_sessions_creator::{GenerationSessionCreator, EncryptionSessionCreator, DecryptionSessionCreator,
+use crate::key_server_cluster::cluster_sessions_creator::{GenerationSessionCreator, EncryptionSessionCreator, DecryptionSessionCreator,
 	SchnorrSigningSessionCreator, KeyVersionNegotiationSessionCreator, AdminSessionCreator, SessionCreatorCore,
 	EcdsaSigningSessionCreator, ClusterSessionCreator};
 
@@ -669,12 +670,12 @@ pub fn create_cluster_view(self_key_pair: Arc<dyn SigningKeyPair>, connections: 
 mod tests {
 	use std::sync::Arc;
 	use std::sync::atomic::{AtomicUsize, Ordering};
-	use crypto::publickey::{Random, Generator};
-	use key_server_cluster::{Error, DummyAclStorage, DummyKeyStorage, MapKeyServerSet, PlainNodeKeyPair};
-	use key_server_cluster::cluster::ClusterConfiguration;
-	use key_server_cluster::connection_trigger::SimpleServersSetChangeSessionCreatorConnector;
-	use key_server_cluster::cluster::tests::DummyCluster;
-	use key_server_cluster::generation_session::{SessionImpl as GenerationSession};
+	use parity_crypto::publickey::{Random, Generator};
+	use crate::key_server_cluster::{Error, DummyAclStorage, DummyKeyStorage, MapKeyServerSet, PlainNodeKeyPair};
+	use crate::key_server_cluster::cluster::ClusterConfiguration;
+	use crate::key_server_cluster::connection_trigger::SimpleServersSetChangeSessionCreatorConnector;
+	use crate::key_server_cluster::cluster::tests::DummyCluster;
+	use crate::key_server_cluster::generation_session::{SessionImpl as GenerationSession};
 	use super::{ClusterSessions, AdminSessionCreationData, ClusterSessionsListener,
 		ClusterSessionsContainerState, SESSION_TIMEOUT_INTERVAL};
 

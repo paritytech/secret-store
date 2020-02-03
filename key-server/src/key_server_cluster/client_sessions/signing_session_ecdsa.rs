@@ -19,23 +19,24 @@ use std::collections::btree_map::Entry;
 use std::sync::Arc;
 use futures::Oneshot;
 use parking_lot::Mutex;
-use crypto::publickey::{Public, Secret, Signature, sign};
+use parity_crypto::publickey::{Public, Secret, Signature, sign};
 use ethereum_types::H256;
-use key_server_cluster::{Error, NodeId, SessionId, SessionMeta, AclStorage, DocumentKeyShare, Requester};
-use key_server_cluster::cluster::{Cluster};
-use key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
-use key_server_cluster::generation_session::{SessionImpl as GenerationSession, SessionParams as GenerationSessionParams,
+use log::warn;
+use crate::key_server_cluster::{Error, NodeId, SessionId, SessionMeta, AclStorage, DocumentKeyShare, Requester};
+use crate::key_server_cluster::cluster::{Cluster};
+use crate::key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
+use crate::key_server_cluster::generation_session::{SessionImpl as GenerationSession, SessionParams as GenerationSessionParams,
 	SessionState as GenerationSessionState};
-use key_server_cluster::math;
-use key_server_cluster::message::{Message, EcdsaSigningMessage, EcdsaSigningConsensusMessage, EcdsaSignatureNonceGenerationMessage,
+use crate::key_server_cluster::math;
+use crate::key_server_cluster::message::{Message, EcdsaSigningMessage, EcdsaSigningConsensusMessage, EcdsaSignatureNonceGenerationMessage,
 	EcdsaInversionNonceGenerationMessage, EcdsaInversionZeroGenerationMessage, EcdsaSigningInversedNonceCoeffShare,
 	EcdsaRequestPartialSignature, EcdsaPartialSignature, EcdsaSigningSessionCompleted, GenerationMessage,
 	ConsensusMessage, EcdsaSigningSessionError, InitializeConsensusSession, ConfirmConsensusInitialization,
 	EcdsaSigningSessionDelegation, EcdsaSigningSessionDelegationCompleted};
-use key_server_cluster::jobs::job_session::JobTransport;
-use key_server_cluster::jobs::key_access_job::KeyAccessJob;
-use key_server_cluster::jobs::signing_job_ecdsa::{EcdsaPartialSigningRequest, EcdsaPartialSigningResponse, EcdsaSigningJob};
-use key_server_cluster::jobs::consensus_session::{ConsensusSessionParams, ConsensusSessionState, ConsensusSession};
+use crate::key_server_cluster::jobs::job_session::JobTransport;
+use crate::key_server_cluster::jobs::key_access_job::KeyAccessJob;
+use crate::key_server_cluster::jobs::signing_job_ecdsa::{EcdsaPartialSigningRequest, EcdsaPartialSigningResponse, EcdsaSigningJob};
+use crate::key_server_cluster::jobs::consensus_session::{ConsensusSessionParams, ConsensusSessionState, ConsensusSession};
 
 /// Distributed ECDSA-signing session.
 /// Based on "A robust threshold elliptic curve digital signature providing a new verifiable secret sharing scheme" paper.
@@ -1070,14 +1071,13 @@ impl JobTransport for SigningJobTransport {
 mod tests {
 	use std::sync::Arc;
 	use ethereum_types::H256;
-	use crypto::publickey::{Random, Generator, Public, verify_public, public_to_address};
-	use key_server_cluster::{SessionId, Error, KeyStorage};
-	use key_server_cluster::cluster::tests::{MessageLoop as ClusterMessageLoop};
-	use key_server_cluster::signing_session_ecdsa::SessionImpl;
-	use key_server_cluster::generation_session::tests::MessageLoop as GenerationMessageLoop;
-	use ServerKeyId;
+	use parity_crypto::publickey::{Random, Generator, Public, verify_public, public_to_address};
+	use crate::key_server_cluster::{SessionId, Error, KeyStorage, ServerKeyId};
+	use crate::key_server_cluster::cluster::tests::{MessageLoop as ClusterMessageLoop};
+	use crate::key_server_cluster::signing_session_ecdsa::SessionImpl;
+	use crate::key_server_cluster::generation_session::tests::MessageLoop as GenerationMessageLoop;
 
-	const DUMMY_SESSION_ID: [u8; 32]  = [1u8; 32];
+	const DUMMY_SESSION_ID: [u8; 32] = [1u8; 32];
 
 	#[derive(Debug)]
 	pub struct MessageLoop(pub ClusterMessageLoop);
@@ -1093,7 +1093,7 @@ mod tests {
 		pub fn init_with_version(self, key_version: Option<H256>) -> Result<(Self, Public, H256), Error> {
 			let message_hash = H256::random();
 			let requester = Random.generate();
-			let signature = crypto::publickey::sign(requester.secret(), &SessionId::from(DUMMY_SESSION_ID)).unwrap();
+			let signature = parity_crypto::publickey::sign(requester.secret(), &SessionId::from(DUMMY_SESSION_ID)).unwrap();
 			self.0.cluster(0).client()
 				.new_ecdsa_signing_session(SessionId::from(DUMMY_SESSION_ID), signature.into(), key_version, message_hash)
 				.map(|_| (self, *requester.public(), message_hash))

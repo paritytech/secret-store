@@ -18,17 +18,18 @@ use std::collections::{BTreeSet, BTreeMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use ethereum_types::H256;
-use crypto::publickey::Public;
+use log::{trace, warn};
+use parity_crypto::publickey::Public;
 use parking_lot::Mutex;
-use key_server_cluster::{KeyServerSet, KeyServerSetSnapshot, KeyServerSetMigration, is_migration_required};
-use key_server_cluster::cluster::{ClusterConfiguration, ServersSetChangeParams};
-use key_server_cluster::cluster_connections_net::NetConnectionsContainer;
-use key_server_cluster::cluster_sessions::{AdminSession, ClusterSession};
-use key_server_cluster::jobs::servers_set_change_access_job::ordered_nodes_hash;
-use key_server_cluster::connection_trigger::{Maintain, ConnectionsAction, ConnectionTrigger,
+use crate::key_server_cluster::{KeyServerSet, KeyServerSetSnapshot, KeyServerSetMigration, is_migration_required};
+use crate::key_server_cluster::cluster::{ClusterConfiguration, ServersSetChangeParams};
+use crate::key_server_cluster::cluster_connections_net::NetConnectionsContainer;
+use crate::key_server_cluster::cluster_sessions::{AdminSession, ClusterSession};
+use crate::key_server_cluster::jobs::servers_set_change_access_job::ordered_nodes_hash;
+use crate::key_server_cluster::connection_trigger::{Maintain, ConnectionsAction, ConnectionTrigger,
 	ServersSetChangeSessionCreatorConnector, TriggerConnections};
-use types::{Error, NodeId};
-use blockchain::SigningKeyPair;
+use crate::types::{Error, NodeId};
+use crate::blockchain::SigningKeyPair;
 
 /// Key servers set change trigger with automated migration procedure.
 pub struct ConnectionTriggerWithMigration {
@@ -449,8 +450,8 @@ fn select_master_node(snapshot: &KeyServerSetSnapshot) -> &NodeId {
 
 #[cfg(test)]
 mod tests {
-	use key_server_cluster::{KeyServerSetSnapshot, KeyServerSetMigration};
-	use key_server_cluster::connection_trigger::ConnectionsAction;
+	use crate::key_server_cluster::{KeyServerSetSnapshot, KeyServerSetMigration};
+	use crate::key_server_cluster::connection_trigger::ConnectionsAction;
 	use super::{MigrationState, SessionState, SessionAction, migration_state, maintain_session,
 		maintain_connections, select_master_node};
 	use ethereum_types::{H256, H512};

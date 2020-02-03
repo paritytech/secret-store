@@ -18,9 +18,9 @@ use std::io;
 use futures::{Future, Poll};
 use tokio_io::AsyncWrite;
 use tokio_io::io::{WriteAll, write_all};
-use crypto::publickey::KeyPair;
-use key_server_cluster::message::Message;
-use key_server_cluster::io::{serialize_message, encrypt_message};
+use parity_crypto::publickey::KeyPair;
+use crate::key_server_cluster::message::Message;
+use crate::key_server_cluster::io::{serialize_message, encrypt_message};
 
 /// Write plain message to the channel.
 pub fn write_message<A>(a: A, message: Message) -> WriteMessage<A> where A: AsyncWrite {

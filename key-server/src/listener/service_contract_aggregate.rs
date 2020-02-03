@@ -15,12 +15,12 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
-use bytes::Bytes;
+use parity_bytes::Bytes;
 use ethereum_types::Address;
-use crypto::publickey::Public;
-use listener::service_contract::ServiceContract;
-use listener::service_contract_listener::ServiceTask;
-use {ServerKeyId};
+use parity_crypto::publickey::Public;
+use crate::listener::service_contract::ServiceContract;
+use crate::listener::service_contract_listener::ServiceTask;
+use crate::{ServerKeyId};
 
 /// Aggregated on-chain service contract.
 pub struct OnChainServiceContractAggregate {

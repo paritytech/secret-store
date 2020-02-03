@@ -17,21 +17,22 @@
 use std::sync::Arc;
 use std::collections::{BTreeSet, BTreeMap};
 use ethereum_types::{H256, Address};
-use crypto::publickey::{Public, Secret, Signature};
+use log::warn;
+use parity_crypto::publickey::{Public, Secret, Signature};
 use futures::Oneshot;
 use parking_lot::Mutex;
-use key_server_cluster::{Error, SessionId, NodeId, DocumentKeyShare, DocumentKeyShareVersion, KeyStorage};
-use key_server_cluster::cluster::Cluster;
-use key_server_cluster::cluster_sessions::{ClusterSession, CompletionSignal};
-use key_server_cluster::math;
-use key_server_cluster::message::{Message, ShareAddMessage, ShareAddConsensusMessage, ConsensusMessageOfShareAdd,
+use crate::key_server_cluster::{Error, SessionId, NodeId, DocumentKeyShare, DocumentKeyShareVersion, KeyStorage};
+use crate::key_server_cluster::cluster::Cluster;
+use crate::key_server_cluster::cluster_sessions::{ClusterSession, CompletionSignal};
+use crate::key_server_cluster::math;
+use crate::key_server_cluster::message::{Message, ShareAddMessage, ShareAddConsensusMessage, ConsensusMessageOfShareAdd,
 	InitializeConsensusSessionOfShareAdd, KeyShareCommon, NewKeysDissemination, ShareAddError,
 	ConfirmConsensusInitialization, CommonKeyData};
-use key_server_cluster::jobs::job_session::JobTransport;
-use key_server_cluster::jobs::dummy_job::{DummyJob, DummyJobTransport};
-use key_server_cluster::jobs::servers_set_change_access_job::{ServersSetChangeAccessJob, ServersSetChangeAccessRequest};
-use key_server_cluster::jobs::consensus_session::{ConsensusSessionParams, ConsensusSessionState, ConsensusSession};
-use key_server_cluster::admin_sessions::ShareChangeSessionMeta;
+use crate::key_server_cluster::jobs::job_session::JobTransport;
+use crate::key_server_cluster::jobs::dummy_job::{DummyJob, DummyJobTransport};
+use crate::key_server_cluster::jobs::servers_set_change_access_job::{ServersSetChangeAccessJob, ServersSetChangeAccessRequest};
+use crate::key_server_cluster::jobs::consensus_session::{ConsensusSessionParams, ConsensusSessionState, ConsensusSession};
+use crate::key_server_cluster::admin_sessions::ShareChangeSessionMeta;
 
 /// Share addition session transport.
 pub trait SessionTransport: Clone + JobTransport<PartialJobRequest=ServersSetChangeAccessRequest, PartialJobResponse=bool> {
@@ -888,12 +889,12 @@ impl SessionTransport for IsolatedSessionTransport {
 #[cfg(test)]
 pub mod tests {
 	use std::collections::BTreeSet;
-	use crypto::publickey::{Random, Generator, Public};
-	use blockchain::SigningKeyPair;
-	use key_server_cluster::{NodeId, Error, KeyStorage};
-	use key_server_cluster::cluster::tests::MessageLoop as ClusterMessageLoop;
-	use key_server_cluster::servers_set_change_session::tests::{MessageLoop, AdminSessionAdapter, generate_key};
-	use key_server_cluster::admin_sessions::ShareChangeSessionMeta;
+	use parity_crypto::publickey::{Random, Generator, Public};
+	use crate::blockchain::SigningKeyPair;
+	use crate::key_server_cluster::{NodeId, Error, KeyStorage};
+	use crate::key_server_cluster::cluster::tests::MessageLoop as ClusterMessageLoop;
+	use crate::key_server_cluster::servers_set_change_session::tests::{MessageLoop, AdminSessionAdapter, generate_key};
+	use crate::key_server_cluster::admin_sessions::ShareChangeSessionMeta;
 	use super::{SessionImpl, SessionParams, IsolatedSessionTransport};
 
 	struct Adapter;

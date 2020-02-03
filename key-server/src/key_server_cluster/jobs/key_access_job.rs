@@ -16,8 +16,8 @@
 
 use std::sync::Arc;
 use std::collections::{BTreeSet, BTreeMap};
-use key_server_cluster::{Error, NodeId, SessionId, Requester, AclStorage};
-use key_server_cluster::jobs::job_session::{JobPartialResponseAction, JobPartialRequestAction, JobExecutor};
+use crate::key_server_cluster::{Error, NodeId, SessionId, Requester, AclStorage};
+use crate::key_server_cluster::jobs::job_session::{JobPartialResponseAction, JobPartialRequestAction, JobExecutor};
 
 /// Purpose of this job is to construct set of nodes, which have agreed to provide access to the given key for the given requestor.
 pub struct KeyAccessJob {

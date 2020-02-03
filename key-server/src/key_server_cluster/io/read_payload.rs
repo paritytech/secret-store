@@ -15,13 +15,13 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::io;
-use futures::{Poll, Future};
+use futures::{try_ready, Poll, Future};
 use tokio_io::AsyncRead;
 use tokio_io::io::{read_exact, ReadExact};
-use crypto::publickey::KeyPair;
-use key_server_cluster::Error;
-use key_server_cluster::message::Message;
-use key_server_cluster::io::message::{MessageHeader, deserialize_message, decrypt_message};
+use parity_crypto::publickey::KeyPair;
+use crate::key_server_cluster::Error;
+use crate::key_server_cluster::message::Message;
+use crate::key_server_cluster::io::message::{MessageHeader, deserialize_message, decrypt_message};
 
 /// Create future for read single message payload from the stream.
 pub fn read_payload<A>(a: A, header: MessageHeader) -> ReadPayload<A> where A: AsyncRead {

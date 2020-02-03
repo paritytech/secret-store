@@ -15,11 +15,11 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::io;
-use futures::{Future, Poll, Async};
+use futures::{try_ready, Future, Poll, Async};
 use tokio_io::AsyncRead;
 use tokio_io::io::{ReadExact, read_exact};
-use key_server_cluster::Error;
-use key_server_cluster::io::message::{MESSAGE_HEADER_SIZE, MessageHeader, deserialize_header};
+use crate::key_server_cluster::Error;
+use crate::key_server_cluster::io::message::{MESSAGE_HEADER_SIZE, MessageHeader, deserialize_header};
 
 /// Create future for read single message header from the stream.
 pub fn read_header<A>(a: A) -> ReadHeader<A> where A: AsyncRead {

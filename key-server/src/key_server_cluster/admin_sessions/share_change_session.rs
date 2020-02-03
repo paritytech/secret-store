@@ -17,18 +17,19 @@
 use std::sync::Arc;
 use std::collections::{BTreeSet, BTreeMap};
 use ethereum_types::H256;
-use crypto::publickey::Secret;
-use key_server_cluster::{Error, NodeId, SessionId, ServerKeyId, KeyStorage};
-use key_server_cluster::cluster::Cluster;
-use key_server_cluster::cluster_sessions::ClusterSession;
-use key_server_cluster::math;
-use key_server_cluster::jobs::servers_set_change_access_job::ServersSetChangeAccessRequest;
-use key_server_cluster::jobs::job_session::JobTransport;
-use key_server_cluster::message::{Message, ServersSetChangeMessage, ServersSetChangeShareAddMessage};
-use key_server_cluster::share_add_session::{SessionTransport as ShareAddSessionTransport,
+use log::warn;
+use parity_crypto::publickey::Secret;
+use crate::key_server_cluster::{Error, NodeId, SessionId, ServerKeyId, KeyStorage};
+use crate::key_server_cluster::cluster::Cluster;
+use crate::key_server_cluster::cluster_sessions::ClusterSession;
+use crate::key_server_cluster::math;
+use crate::key_server_cluster::jobs::servers_set_change_access_job::ServersSetChangeAccessRequest;
+use crate::key_server_cluster::jobs::job_session::JobTransport;
+use crate::key_server_cluster::message::{Message, ServersSetChangeMessage, ServersSetChangeShareAddMessage};
+use crate::key_server_cluster::share_add_session::{SessionTransport as ShareAddSessionTransport,
 	SessionImpl as ShareAddSessionImpl, SessionParams as ShareAddSessionParams};
-use key_server_cluster::message::ShareAddMessage;
-use key_server_cluster::admin_sessions::ShareChangeSessionMeta;
+use crate::key_server_cluster::message::ShareAddMessage;
+use crate::key_server_cluster::admin_sessions::ShareChangeSessionMeta;
 
 /// Single session meta-change session. Brief overview:
 /// 1) nodes that have been already removed from cluster (isolated nodes) are removed from session
@@ -302,7 +303,7 @@ impl ShareChangeSessionPlan {
 
 #[cfg(test)]
 mod tests {
-	use key_server_cluster::math;
+	use crate::key_server_cluster::math;
 	use super::prepare_share_change_session_plan;
 
 	#[test]

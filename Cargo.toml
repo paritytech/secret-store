@@ -1,6 +1,6 @@
 [package]
-description = "Parity Ethereum (EthCore) Secret Store"
-name = "ethcore-secretstore"
+description = "Parity Secret Store"
+name = "parity-secretstore"
 version = "1.0.0"
 license = "GPL-3.0"
 authors = ["Parity Technologies <admin@parity.io>"]

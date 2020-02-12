@@ -1,5 +1,5 @@
 # secret-store
-This is Parity Secret Store implementation. Detailed information about the solution can be found on [Parity wiki](https://wiki.parity.io/Secret-Store)
+This is Parity Secret Store. Detailed information about the solution can be found on [Parity wiki](https://wiki.parity.io/Secret-Store)
 
 The entry point for the library is the method for launching new key server instance:
 

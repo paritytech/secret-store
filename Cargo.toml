@@ -11,7 +11,6 @@ ethabi = "9.0.1"
 ethabi-contract = "9.0.0"
 ethabi-derive = "9.0.1"
 ethereum-types = "0.8.0"
-ethkey = { path = "../accounts/ethkey", optional = true }
 futures = "0.1"
 hyper = { version = "0.12", default-features = false }
 keccak-hash = "0.4.0"

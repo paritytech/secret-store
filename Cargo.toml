@@ -1,5 +1,6 @@
 [workspace]
 members = [
+	"http-service",
 	"key-server",
 	"primitives",
 ]

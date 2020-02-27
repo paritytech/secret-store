@@ -24,6 +24,9 @@ use crate::{
 	requester::Requester,
 };
 
+/// Expose AccumulatingKeyServer if requested.
+pub use self::accumulating_key_server::*;
+
 /// Session origin. Origin can be used by some services if they're working with
 /// several endpoints (like ethereum service could listen to several contracts).
 pub type Origin = H160;
@@ -404,5 +407,247 @@ impl<P, R> SessionResult<P, R> {
 impl<P, R> Into<Result<R, Error>> for SessionResult<P, R> {
 	fn into(self: SessionResult<P, R>) -> Result<R, Error> {
 		self.result
+	}
+}
+
+#[cfg(not(feature = "test-helpers"))]
+mod accumulating_key_server {
+}
+
+#[cfg(feature = "test-helpers")]
+mod accumulating_key_server {
+	use futures::future::{ready, Ready};
+	use parking_lot::Mutex;
+	use crate::service::ServiceTask;
+	use super::*;
+
+	/// Stores every incoming request in internal queue, then fails.
+	#[derive(Default)]
+	pub struct AccumulatingKeyServer {
+		accumulated_tasks: Mutex<Vec<ServiceTask>>,
+	}
+
+	impl AccumulatingKeyServer {
+		/// Returns all accumulated tasks.
+		pub fn accumulated_tasks(&self) -> Vec<ServiceTask> {
+			self.accumulated_tasks.lock().clone()
+		}
+	}
+
+	impl ServerKeyGenerator for AccumulatingKeyServer {
+		type GenerateKeyFuture = Ready<ServerKeyGenerationResult>;
+		type RestoreKeyFuture = Ready<ServerKeyRetrievalResult>;
+
+		fn generate_key(
+			&self,
+			origin: Option<Origin>,
+			key_id: ServerKeyId,
+			author: Requester,
+			threshold: usize,
+		) -> Self::GenerateKeyFuture {
+			self.accumulated_tasks.lock().push(ServiceTask::GenerateServerKey(
+				key_id,
+				author,
+				threshold,
+			));
+			ready(SessionResult {
+				origin,
+				params: ServerKeyGenerationParams {
+					key_id,
+				},
+				result: Err(Error::Internal("Test-Error".into())),
+			})
+		}
+
+		fn restore_key_public(
+			&self,
+			origin: Option<Origin>,
+			key_id: ServerKeyId,
+			author: Option<Requester>,
+		) -> Self::RestoreKeyFuture {
+			self.accumulated_tasks.lock().push(ServiceTask::RetrieveServerKey(
+				key_id,
+				author,
+			));
+			ready(SessionResult {
+				origin,
+				params: ServerKeyRetrievalParams {
+					key_id,
+				},
+				result: Err(Error::Internal("Test-Error".into())),
+			})
+		}
+	}
+
+	impl DocumentKeyServer for AccumulatingKeyServer {
+		type StoreDocumentKeyFuture = Ready<DocumentKeyStoreResult>;
+		type GenerateDocumentKeyFuture = Ready<DocumentKeyGenerationResult>;
+		type RestoreDocumentKeyFuture = Ready<DocumentKeyRetrievalResult>;
+		type RestoreDocumentKeyCommonFuture = Ready<DocumentKeyCommonRetrievalResult>;
+		type RestoreDocumentKeyShadowFuture = Ready<DocumentKeyShadowRetrievalResult>;
+
+		fn store_document_key(
+			&self,
+			origin: Option<Origin>,
+			key_id: ServerKeyId,
+			author: Requester,
+			common_point: Public,
+			encrypted_document_key: Public,
+		) -> Self::StoreDocumentKeyFuture {
+			self.accumulated_tasks.lock().push(ServiceTask::StoreDocumentKey(
+				key_id,
+				author,
+				common_point,
+				encrypted_document_key,
+			));
+			ready(SessionResult {
+				origin,
+				params: DocumentKeyStoreParams {
+					key_id,
+				},
+				result: Err(Error::Internal("Test-Error".into())),
+			})
+		}
+
+		fn generate_document_key(
+			&self,
+			origin: Option<Origin>,
+			key_id: ServerKeyId,
+			author: Requester,
+			threshold: usize,
+		) -> Self::GenerateDocumentKeyFuture {
+			self.accumulated_tasks.lock().push(ServiceTask::GenerateDocumentKey(
+				key_id,
+				author,
+				threshold,
+			));
+			ready(SessionResult {
+				origin,
+				params: DocumentKeyGenerationParams {
+					key_id,
+				},
+				result: Err(Error::Internal("Test-Error".into())),
+			})
+		}
+
+		fn restore_document_key(
+			&self,
+			origin: Option<Origin>,
+			key_id: ServerKeyId,
+			requester: Requester,
+		) -> Self::RestoreDocumentKeyFuture {
+			self.accumulated_tasks.lock().push(ServiceTask::RetrieveDocumentKey(
+				key_id,
+				requester.clone(),
+			));
+			ready(SessionResult {
+				origin,
+				params: DocumentKeyRetrievalParams {
+					key_id, requester,
+				},
+				result: Err(Error::Internal("Test-Error".into())),
+			})
+		}
+
+		fn restore_document_key_common(
+			&self,
+			_origin: Option<Origin>,
+			_key_id: ServerKeyId,
+			_requester: Requester,
+		) -> Self::RestoreDocumentKeyCommonFuture {
+			unimplemented!()
+		}
+
+		fn restore_document_key_shadow(
+			&self,
+			origin: Option<Origin>,
+			key_id: ServerKeyId,
+			requester: Requester,
+		) -> Self::RestoreDocumentKeyShadowFuture {
+			self.accumulated_tasks.lock().push(ServiceTask::RetrieveShadowDocumentKey(
+				key_id,
+				requester.clone(),
+			));
+			ready(SessionResult {
+				origin,
+				params: DocumentKeyShadowRetrievalParams {
+					key_id, requester,
+				},
+				result: Err(Error::Internal("Test-Error".into())),
+			})
+		}
+	}
+
+	impl MessageSigner for AccumulatingKeyServer {
+		type SignMessageSchnorrFuture = Ready<SchnorrSigningResult>;
+		type SignMessageEcdsaFuture = Ready<EcdsaSigningResult>;
+
+		fn sign_message_schnorr(
+			&self,
+			origin: Option<Origin>,
+			key_id: ServerKeyId,
+			requester: Requester,
+			message: H256,
+		) -> Self::SignMessageSchnorrFuture {
+			self.accumulated_tasks.lock().push(ServiceTask::SchnorrSignMessage(
+				key_id,
+				requester.clone(),
+				message,
+			));
+			ready(SessionResult {
+				origin,
+				params: SchnorrSigningParams {
+					key_id, requester,
+				},
+				result: Err(Error::Internal("Test-Error".into())),
+			})
+		}
+
+		fn sign_message_ecdsa(
+			&self,
+			origin: Option<Origin>,
+			key_id: ServerKeyId,
+			requester: Requester,
+			message: H256,
+		) -> Self::SignMessageEcdsaFuture {
+			self.accumulated_tasks.lock().push(ServiceTask::EcdsaSignMessage(
+				key_id,
+				requester.clone(),
+				message,
+			));
+			ready(SessionResult {
+				origin,
+				params: EcdsaSigningParams {
+					key_id, requester,
+				},
+				result: Err(Error::Internal("Test-Error".into())),
+			})
+		}
+	}
+
+	impl AdminSessionsServer for AccumulatingKeyServer {
+		type ChangeServersSetFuture = Ready<SessionResult<(), ()>>;
+
+		fn change_servers_set(
+			&self,
+			origin: Option<Origin>,
+			old_set_signature: Signature,
+			new_set_signature: Signature,
+			new_servers_set: BTreeSet<KeyServerPublic>,
+		) -> Self::ChangeServersSetFuture {
+			self.accumulated_tasks.lock().push(ServiceTask::ChangeServersSet(
+				old_set_signature,
+				new_set_signature,
+				new_servers_set,
+			));
+			ready(SessionResult {
+				origin,
+				params: (),
+				result: Err(Error::Internal("Test-Error".into())),
+			})
+		}
+	}
+
+	impl KeyServer for AccumulatingKeyServer {
 	}
 }

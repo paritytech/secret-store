@@ -1,0 +1,16 @@
+[package]
+name = "parity-secretstore-blockchain-service"
+version = "1.0.0"
+license = "GPL-3.0"
+authors = ["Parity Technologies <admin@parity.io>"]
+edition = "2018"
+
+[dependencies]
+ethereum-types = "0.8"
+futures = "0.3"
+log = "0.4"
+primitives = { package = "parity-secretstore-primitives", path = "../primitives" }
+parking_lot = "0.10"
+
+[dev-dependencies]
+primitives = { package = "parity-secretstore-primitives", path = "../primitives", features = ["test-helpers"] }

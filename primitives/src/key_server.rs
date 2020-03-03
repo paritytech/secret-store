@@ -551,11 +551,21 @@ mod accumulating_key_server {
 
 		fn restore_document_key_common(
 			&self,
-			_origin: Option<Origin>,
-			_key_id: ServerKeyId,
-			_requester: Requester,
+			origin: Option<Origin>,
+			key_id: ServerKeyId,
+			requester: Requester,
 		) -> Self::RestoreDocumentKeyCommonFuture {
-			unimplemented!()
+			self.accumulated_tasks.lock().push(ServiceTask::RetrieveShadowDocumentKey(
+				key_id,
+				requester.clone(),
+			));
+			ready(SessionResult {
+				origin,
+				params: DocumentKeyCommonRetrievalParams {
+					key_id, requester,
+				},
+				result: Err(Error::Internal("Test-Error".into())),
+			})
 		}
 
 		fn restore_document_key_shadow(

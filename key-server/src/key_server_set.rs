@@ -20,12 +20,13 @@ use std::collections::{BTreeMap, HashSet};
 use parking_lot::Mutex;
 use ethabi::FunctionOutputDecoder;
 use ethereum_types::{H256, Address};
-use crypto::publickey::public_to_address;
-use bytes::Bytes;
-use types::{Error, Public, NodeAddress, NodeId};
-use blockchain::{SecretStoreChain, NewBlocksNotify, SigningKeyPair, ContractAddress, BlockId};
+use log::{trace, warn};
+use parity_crypto::publickey::public_to_address;
+use parity_bytes::Bytes;
+use crate::types::{Error, Public, NodeAddress, NodeId};
+use crate::blockchain::{SecretStoreChain, NewBlocksNotify, SigningKeyPair, ContractAddress, BlockId};
 
-use_contract!(key_server, "res/key_server_set.json");
+ethabi_contract::use_contract!(key_server, "res/key_server_set.json");
 
 /// Name of KeyServerSet contract in registry.
 const KEY_SERVER_SET_CONTRACT_REGISTRY_NAME: &'static str = "secretstore_server_set";
@@ -574,7 +575,7 @@ pub mod tests {
 	use std::collections::BTreeMap;
 	use std::net::SocketAddr;
 	use ethereum_types::{H256, H512};
-	use crypto::publickey::Public;
+	use parity_crypto::publickey::Public;
 	use super::{update_future_set, update_number_of_confirmations, FutureNewSet,
 		KeyServerSet, KeyServerSetSnapshot, MIGRATION_CONFIRMATIONS_REQUIRED};
 

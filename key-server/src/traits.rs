@@ -16,7 +16,7 @@
 
 use std::collections::BTreeSet;
 use futures::Future;
-use types::{Error, Public, ServerKeyId, MessageHash, EncryptedMessageSignature, RequestSignature, Requester,
+use crate::types::{Error, Public, ServerKeyId, MessageHash, EncryptedMessageSignature, RequestSignature, Requester,
 	EncryptedDocumentKey, EncryptedDocumentKeyShadow, NodeId};
 
 /// Server key (SK) generator.

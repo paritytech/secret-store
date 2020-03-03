@@ -15,7 +15,7 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::{BTreeSet, BTreeMap};
-use key_server_cluster::{Error, NodeId, SessionMeta};
+use crate::key_server_cluster::{Error, NodeId, SessionMeta};
 
 /// Partial response action.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -392,8 +392,8 @@ fn consensus_unreachable(rejects: &BTreeMap<NodeId, bool>) -> Error {
 pub mod tests {
 	use std::collections::{VecDeque, BTreeMap, BTreeSet};
 	use parking_lot::Mutex;
-	use crypto::publickey::Public;
-	use key_server_cluster::{Error, NodeId, SessionId, SessionMeta};
+	use parity_crypto::publickey::Public;
+	use crate::key_server_cluster::{Error, NodeId, SessionId, SessionMeta};
 	use super::{JobPartialResponseAction, JobPartialRequestAction, JobExecutor, JobTransport, JobSession, JobSessionState};
 
 	pub struct SquaredSumJobExecutor;

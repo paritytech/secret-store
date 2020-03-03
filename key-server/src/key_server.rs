@@ -18,18 +18,18 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use futures::{future::{err, result}, Future};
 use parking_lot::Mutex;
-use crypto::DEFAULT_MAC;
-use crypto::publickey::public_to_address;
+use parity_crypto::DEFAULT_MAC;
+use parity_crypto::publickey::public_to_address;
 use parity_runtime::Executor;
 use super::acl_storage::AclStorage;
 use super::key_storage::KeyStorage;
 use super::key_server_set::KeyServerSet;
-use blockchain::SigningKeyPair;
-use key_server_cluster::{math, new_network_cluster, ClusterSession, WaitableSession};
-use traits::{AdminSessionsServer, ServerKeyGenerator, DocumentKeyServer, MessageSigner, KeyServer};
-use types::{Error, Public, RequestSignature, Requester, ServerKeyId, EncryptedDocumentKey, EncryptedDocumentKeyShadow,
+use crate::blockchain::SigningKeyPair;
+use crate::key_server_cluster::{math, new_network_cluster, ClusterSession, WaitableSession};
+use crate::traits::{AdminSessionsServer, ServerKeyGenerator, DocumentKeyServer, MessageSigner, KeyServer};
+use crate::types::{Error, Public, RequestSignature, Requester, ServerKeyId, EncryptedDocumentKey, EncryptedDocumentKeyShadow,
 	ClusterConfiguration, MessageHash, EncryptedMessageSignature, NodeId};
-use key_server_cluster::{ClusterClient, ClusterConfiguration as NetClusterConfiguration, NetConnectionsManagerConfig};
+use crate::key_server_cluster::{ClusterClient, ClusterConfiguration as NetClusterConfiguration, NetConnectionsManagerConfig};
 
 /// Secret store key server implementation
 pub struct KeyServerImpl {
@@ -165,7 +165,7 @@ impl DocumentKeyServer for KeyServerImpl {
 
 		// encrypt document key with requestor public key
 		let encrypted_document_key = stored_document_key
-			.and_then(|(public, document_key)| crypto::publickey::ecies::encrypt(&public, &DEFAULT_MAC, document_key.as_bytes())
+			.and_then(|(public, document_key)| parity_crypto::publickey::ecies::encrypt(&public, &DEFAULT_MAC, document_key.as_bytes())
 				.map_err(|err| Error::Internal(format!("Error encrypting document key: {}", err))));
 
 		Box::new(encrypted_document_key)
@@ -191,7 +191,7 @@ impl DocumentKeyServer for KeyServerImpl {
 		// encrypt document key with requestor public key
 		let encrypted_document_key = stored_document_key
 			.and_then(|(public, document_key)|
-				crypto::publickey::ecies::encrypt(&public, &DEFAULT_MAC, document_key.decrypted_secret.as_bytes())
+				parity_crypto::publickey::ecies::encrypt(&public, &DEFAULT_MAC, document_key.decrypted_secret.as_bytes())
 					.map_err(|err| Error::Internal(format!("Error encrypting document key: {}", err))));
 
 		Box::new(encrypted_document_key)
@@ -236,7 +236,7 @@ impl MessageSigner for KeyServerImpl {
 
 		// encrypt signature with requestor public key
 		let encrypted_signature = combined_signature
-			.and_then(|(public, combined_signature)| crypto::publickey::ecies::encrypt(&public, &DEFAULT_MAC, &combined_signature)
+			.and_then(|(public, combined_signature)| parity_crypto::publickey::ecies::encrypt(&public, &DEFAULT_MAC, &combined_signature)
 				.map_err(|err| Error::Internal(format!("Error encrypting message signature: {}", err))));
 
 		Box::new(encrypted_signature)
@@ -262,7 +262,7 @@ impl MessageSigner for KeyServerImpl {
 
 		// encrypt combined signature with requestor public key
 		let encrypted_signature = signature
-			.and_then(|(public, signature)| crypto::publickey::ecies::encrypt(&public, &DEFAULT_MAC, &*signature)
+			.and_then(|(public, signature)| parity_crypto::publickey::ecies::encrypt(&public, &DEFAULT_MAC, &*signature)
 				.map_err(|err| Error::Internal(format!("Error encrypting message signature: {}", err))));
 
 		Box::new(encrypted_signature)
@@ -314,20 +314,20 @@ pub mod tests {
 	use std::net::SocketAddr;
 	use std::collections::BTreeMap;
 	use futures::Future;
-	use crypto::DEFAULT_MAC;
-	use crypto::publickey::{Secret, Random, Generator, verify_public};
-	use acl_storage::DummyAclStorage;
-	use key_storage::KeyStorage;
-	use key_storage::tests::DummyKeyStorage;
-	use node_key_pair::PlainNodeKeyPair;
-	use key_server_set::tests::MapKeyServerSet;
-	use key_server_cluster::math;
+	use parity_crypto::DEFAULT_MAC;
+	use parity_crypto::publickey::{Secret, Random, Generator, verify_public};
+	use crate::acl_storage::DummyAclStorage;
+	use crate::key_storage::KeyStorage;
+	use crate::key_storage::tests::DummyKeyStorage;
+	use crate::node_key_pair::PlainNodeKeyPair;
+	use crate::key_server_set::tests::MapKeyServerSet;
+	use crate::key_server_cluster::math;
 	use ethereum_types::{H256, H520};
 	use parity_runtime::Runtime;
-	use types::{Error, Public, ClusterConfiguration, NodeAddress, RequestSignature, ServerKeyId,
+	use crate::types::{Error, Public, ClusterConfiguration, NodeAddress, RequestSignature, ServerKeyId,
 		EncryptedDocumentKey, EncryptedDocumentKeyShadow, MessageHash, EncryptedMessageSignature,
 		Requester, NodeId};
-	use traits::{AdminSessionsServer, ServerKeyGenerator, DocumentKeyServer, MessageSigner, KeyServer};
+	use crate::traits::{AdminSessionsServer, ServerKeyGenerator, DocumentKeyServer, MessageSigner, KeyServer};
 	use super::KeyServerImpl;
 
 	#[derive(Default)]
@@ -490,13 +490,13 @@ pub mod tests {
 		let threshold = 0;
 		let document = Random.generate().secret().clone();
 		let secret = Random.generate().secret().clone();
-		let signature: Requester = crypto::publickey::sign(&secret, &document).unwrap().into();
+		let signature: Requester = parity_crypto::publickey::sign(&secret, &document).unwrap().into();
 		let generated_key = key_servers[0].generate_document_key(
 			*document,
 			signature.clone(),
 			threshold,
 		).wait().unwrap();
-		let generated_key = crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &generated_key).unwrap();
+		let generated_key = parity_crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &generated_key).unwrap();
 
 		// now let's try to retrieve key back
 		for key_server in key_servers.iter() {
@@ -504,7 +504,7 @@ pub mod tests {
 				*document,
 				signature.clone(),
 			).wait().unwrap();
-			let retrieved_key = crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &retrieved_key).unwrap();
+			let retrieved_key = parity_crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &retrieved_key).unwrap();
 			assert_eq!(retrieved_key, generated_key);
 		}
 		drop(runtime);
@@ -520,13 +520,13 @@ pub mod tests {
 			// generate document key
 			let document = Random.generate().secret().clone();
 			let secret = Random.generate().secret().clone();
-			let signature: Requester = crypto::publickey::sign(&secret, &document).unwrap().into();
+			let signature: Requester = parity_crypto::publickey::sign(&secret, &document).unwrap().into();
 			let generated_key = key_servers[0].generate_document_key(
 				*document,
 				signature.clone(),
 				*threshold,
 			).wait().unwrap();
-			let generated_key = crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &generated_key).unwrap();
+			let generated_key = parity_crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &generated_key).unwrap();
 
 			// now let's try to retrieve key back
 			for (i, key_server) in key_servers.iter().enumerate() {
@@ -534,7 +534,7 @@ pub mod tests {
 					*document,
 					signature.clone(),
 				).wait().unwrap();
-				let retrieved_key = crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &retrieved_key).unwrap();
+				let retrieved_key = parity_crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &retrieved_key).unwrap();
 				assert_eq!(retrieved_key, generated_key);
 
 				let key_share = key_storages[i].get(&document).unwrap().unwrap();
@@ -555,7 +555,7 @@ pub mod tests {
 			// generate server key
 			let server_key_id = Random.generate().secret().clone();
 			let requestor_secret = Random.generate().secret().clone();
-			let signature: Requester = crypto::publickey::sign(&requestor_secret, &server_key_id).unwrap().into();
+			let signature: Requester = parity_crypto::publickey::sign(&requestor_secret, &server_key_id).unwrap().into();
 			let server_public = key_servers[0].generate_key(
 				*server_key_id,
 				signature.clone(),
@@ -573,7 +573,7 @@ pub mod tests {
 			// now let's try to retrieve key back
 			for key_server in key_servers.iter() {
 				let retrieved_key = key_server.restore_document_key(*server_key_id, signature.clone()).wait().unwrap();
-				let retrieved_key = crypto::publickey::ecies::decrypt(&requestor_secret, &DEFAULT_MAC, &retrieved_key).unwrap();
+				let retrieved_key = parity_crypto::publickey::ecies::decrypt(&requestor_secret, &DEFAULT_MAC, &retrieved_key).unwrap();
 				let retrieved_key = Public::from_slice(&retrieved_key);
 				assert_eq!(retrieved_key, generated_key);
 			}
@@ -591,7 +591,7 @@ pub mod tests {
 			// generate server key
 			let server_key_id = Random.generate().secret().clone();
 			let requestor_secret = Random.generate().secret().clone();
-			let signature: Requester = crypto::publickey::sign(&requestor_secret, &server_key_id).unwrap().into();
+			let signature: Requester = parity_crypto::publickey::sign(&requestor_secret, &server_key_id).unwrap().into();
 			let server_public = key_servers[0].generate_key(
 				*server_key_id,
 				signature.clone(),
@@ -605,7 +605,7 @@ pub mod tests {
 				signature,
 				message_hash,
 			).wait().unwrap();
-			let combined_signature = crypto::publickey::ecies::decrypt(&requestor_secret, &DEFAULT_MAC, &combined_signature).unwrap();
+			let combined_signature = parity_crypto::publickey::ecies::decrypt(&requestor_secret, &DEFAULT_MAC, &combined_signature).unwrap();
 			let signature_c = Secret::copy_from_slice(&combined_signature[..32]).unwrap();
 			let signature_s = Secret::copy_from_slice(&combined_signature[32..]).unwrap();
 
@@ -624,20 +624,20 @@ pub mod tests {
 		let threshold = 0;
 		let document = Random.generate().secret().clone();
 		let secret = Random.generate().secret().clone();
-		let signature: Requester = crypto::publickey::sign(&secret, &document).unwrap().into();
+		let signature: Requester = parity_crypto::publickey::sign(&secret, &document).unwrap().into();
 		let generated_key = key_servers[0].generate_document_key(
 			*document,
 			signature.clone(),
 			threshold,
 		).wait().unwrap();
-		let generated_key = crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &generated_key).unwrap();
+		let generated_key = parity_crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &generated_key).unwrap();
 
 		// remove key from node0
 		key_storages[0].remove(&document).unwrap();
 
 		// now let's try to retrieve key back by requesting it from node0, so that session must be delegated
 		let retrieved_key = key_servers[0].restore_document_key(*document, signature).wait().unwrap();
-		let retrieved_key = crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &retrieved_key).unwrap();
+		let retrieved_key = parity_crypto::publickey::ecies::decrypt(&secret, &DEFAULT_MAC, &retrieved_key).unwrap();
 		assert_eq!(retrieved_key, generated_key);
 		drop(runtime);
 	}
@@ -651,7 +651,7 @@ pub mod tests {
 		// generate server key
 		let server_key_id = Random.generate().secret().clone();
 		let requestor_secret = Random.generate().secret().clone();
-		let signature: Requester = crypto::publickey::sign(&requestor_secret, &server_key_id).unwrap().into();
+		let signature: Requester = parity_crypto::publickey::sign(&requestor_secret, &server_key_id).unwrap().into();
 		let server_public = key_servers[0].generate_key(*server_key_id, signature.clone(), threshold).wait().unwrap();
 
 		// remove key from node0
@@ -664,7 +664,7 @@ pub mod tests {
 			signature,
 			message_hash,
 		).wait().unwrap();
-		let combined_signature = crypto::publickey::ecies::decrypt(&requestor_secret, &DEFAULT_MAC, &combined_signature).unwrap();
+		let combined_signature = parity_crypto::publickey::ecies::decrypt(&requestor_secret, &DEFAULT_MAC, &combined_signature).unwrap();
 		let signature_c = Secret::copy_from_slice(&combined_signature[..32]).unwrap();
 		let signature_s = Secret::copy_from_slice(&combined_signature[32..]).unwrap();
 
@@ -682,7 +682,7 @@ pub mod tests {
 		// generate server key
 		let server_key_id = Random.generate().secret().clone();
 		let requestor_secret = Random.generate().secret().clone();
-		let signature = crypto::publickey::sign(&requestor_secret, &server_key_id).unwrap();
+		let signature = parity_crypto::publickey::sign(&requestor_secret, &server_key_id).unwrap();
 		let server_public = key_servers[0].generate_key(
 			*server_key_id,
 			signature.clone().into(),
@@ -699,7 +699,7 @@ pub mod tests {
 			signature.clone().into(),
 			message_hash,
 		).wait().unwrap();
-		let signature = crypto::publickey::ecies::decrypt(&requestor_secret, &DEFAULT_MAC, &signature).unwrap();
+		let signature = parity_crypto::publickey::ecies::decrypt(&requestor_secret, &DEFAULT_MAC, &signature).unwrap();
 		let signature = H520::from_slice(&signature[0..65]);
 
 		// check signature

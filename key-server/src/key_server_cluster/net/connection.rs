@@ -15,9 +15,9 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::net;
-use crypto::publickey::KeyPair;
-use key_server_cluster::NodeId;
-use key_server_cluster::io::SharedTcpStream;
+use parity_crypto::publickey::KeyPair;
+use crate::key_server_cluster::NodeId;
+use crate::key_server_cluster::io::SharedTcpStream;
 
 /// Established connection data
 pub struct Connection {

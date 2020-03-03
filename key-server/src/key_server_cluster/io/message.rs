@@ -19,12 +19,12 @@ use std::u16;
 use std::ops::Deref;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use serde_json;
-use crypto::publickey::ecies;
-use crypto::publickey::{Secret, KeyPair};
-use crypto::publickey::ec_math_utils::CURVE_ORDER;
+use parity_crypto::publickey::ecies;
+use parity_crypto::publickey::{Secret, KeyPair};
+use parity_crypto::publickey::ec_math_utils::CURVE_ORDER;
 use ethereum_types::{H256, U256, BigEndianHash};
-use key_server_cluster::Error;
-use key_server_cluster::message::{Message, ClusterMessage, GenerationMessage, EncryptionMessage, DecryptionMessage,
+use crate::key_server_cluster::Error;
+use crate::key_server_cluster::message::{Message, ClusterMessage, GenerationMessage, EncryptionMessage, DecryptionMessage,
 	SchnorrSigningMessage, EcdsaSigningMessage, ServersSetChangeMessage, ShareAddMessage, KeyVersionNegotiationMessage};
 
 /// Size of serialized header.
@@ -305,10 +305,10 @@ pub mod tests {
 	use std::io;
 	use futures::Poll;
 	use tokio_io::{AsyncRead, AsyncWrite};
-	use crypto::publickey::{Random, Generator, KeyPair};
-	use crypto::publickey::ecdh::agree;
-	use key_server_cluster::Error;
-	use key_server_cluster::message::Message;
+	use parity_crypto::publickey::{Random, Generator, KeyPair};
+	use parity_crypto::publickey::ecdh::agree;
+	use crate::key_server_cluster::Error;
+	use crate::key_server_cluster::message::Message;
 	use super::{MESSAGE_HEADER_SIZE, CURRENT_HEADER_VERSION, MessageHeader, fix_shared_key, encrypt_message,
 		serialize_message, serialize_header, deserialize_header};
 

@@ -18,12 +18,12 @@ use std::io;
 use std::sync::Arc;
 use std::net::SocketAddr;
 use std::time::Duration;
-use futures::{Future, Poll};
+use futures::{try_ready, Future, Poll};
 use tokio::net::TcpStream;
-use blockchain::SigningKeyPair;
-use key_server_cluster::Error;
-use key_server_cluster::io::{accept_handshake, Handshake, Deadline, deadline};
-use key_server_cluster::net::Connection;
+use crate::blockchain::SigningKeyPair;
+use crate::key_server_cluster::Error;
+use crate::key_server_cluster::io::{accept_handshake, Handshake, Deadline, deadline};
+use crate::key_server_cluster::net::Connection;
 
 /// Create future for accepting incoming connection.
 pub fn accept_connection(stream: TcpStream, self_key_pair: Arc<dyn SigningKeyPair>) -> Deadline<AcceptConnection> {

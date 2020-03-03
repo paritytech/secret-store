@@ -16,8 +16,8 @@
 
 use std::sync::Arc;
 use std::collections::{BTreeSet, BTreeMap};
-use key_server_cluster::{Error, NodeId, SessionId, KeyStorage};
-use key_server_cluster::jobs::job_session::{JobPartialRequestAction, JobPartialResponseAction, JobExecutor};
+use crate::key_server_cluster::{Error, NodeId, SessionId, KeyStorage};
+use crate::key_server_cluster::jobs::job_session::{JobPartialRequestAction, JobPartialResponseAction, JobExecutor};
 
 /// Unknown sessions report job.
 pub struct UnknownSessionsJob {

@@ -15,11 +15,11 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::{BTreeSet, BTreeMap};
-use crypto::publickey::{Public, Secret, Signature};
+use parity_crypto::publickey::{Public, Secret, Signature};
 use ethereum_types::H256;
-use key_server_cluster::{Error, NodeId, DocumentKeyShare};
-use key_server_cluster::math;
-use key_server_cluster::jobs::job_session::{JobPartialRequestAction, JobPartialResponseAction, JobExecutor};
+use crate::key_server_cluster::{Error, NodeId, DocumentKeyShare};
+use crate::key_server_cluster::math;
+use crate::key_server_cluster::jobs::job_session::{JobPartialRequestAction, JobPartialResponseAction, JobExecutor};
 
 /// Signing job.
 pub struct EcdsaSigningJob {

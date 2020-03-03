@@ -14,46 +14,6 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
-extern crate byteorder;
-extern crate ethabi;
-extern crate ethereum_types;
-extern crate hyper;
-extern crate secp256k1;
-extern crate keccak_hash as hash;
-extern crate kvdb;
-extern crate kvdb_rocksdb;
-extern crate parity_bytes as bytes;
-extern crate parity_crypto as crypto;
-extern crate parity_runtime;
-extern crate parking_lot;
-extern crate percent_encoding;
-extern crate rustc_hex;
-extern crate serde;
-extern crate serde_json;
-extern crate tiny_keccak;
-extern crate tokio;
-extern crate tokio_io;
-extern crate tokio_service;
-extern crate url;
-extern crate jsonrpc_server_utils;
-
-extern crate ethabi_derive;
-#[macro_use]
-extern crate ethabi_contract;
-#[macro_use]
-extern crate futures;
-#[macro_use]
-extern crate serde_derive;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-
-#[cfg(test)]
-extern crate env_logger;
-#[cfg(test)]
-extern crate tempdir;
-
 mod key_server_cluster;
 mod types;
 
@@ -73,10 +33,10 @@ use kvdb::KeyValueDB;
 use kvdb_rocksdb::{Database, DatabaseConfig};
 use parity_runtime::Executor;
 
-pub use types::{ServerKeyId, EncryptedDocumentKey, RequestSignature, Public,
+pub use crate::types::{ServerKeyId, EncryptedDocumentKey, RequestSignature, Public,
 	Error, NodeAddress, ServiceConfiguration, ClusterConfiguration};
-pub use traits::KeyServer;
-pub use blockchain::{SecretStoreChain, SigningKeyPair, ContractAddress, BlockId, BlockNumber, NewBlocksNotify, Filter};
+pub use crate::traits::KeyServer;
+pub use crate::blockchain::{SecretStoreChain, SigningKeyPair, ContractAddress, BlockId, BlockNumber, NewBlocksNotify, Filter};
 pub use self::node_key_pair::PlainNodeKeyPair;
 
 /// Open a secret store DB using the given secret store data path. The DB path is one level beneath the data path.

@@ -17,6 +17,7 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Weak};
 use futures::future::{ok, result};
+use log::warn;
 use hyper::{self, Uri, Request as HttpRequest, Response as HttpResponse, Method as HttpMethod,
 	StatusCode as HttpStatusCode, Body,
 	header::{self, HeaderValue},
@@ -31,9 +32,9 @@ use parity_runtime::Executor;
 use futures::{future, Future, Stream};
 use percent_encoding::percent_decode;
 
-use traits::KeyServer;
-use serialization::{SerializableEncryptedDocumentKeyShadow, SerializableBytes, SerializablePublic};
-use types::{Error, Public, MessageHash, NodeAddress, RequestSignature, ServerKeyId,
+use crate::traits::KeyServer;
+use crate::serialization::{SerializableEncryptedDocumentKeyShadow, SerializableBytes, SerializablePublic};
+use crate::types::{Error, Public, MessageHash, NodeAddress, RequestSignature, ServerKeyId,
 	EncryptedDocumentKey, EncryptedDocumentKeyShadow, NodeId};
 use jsonrpc_server_utils::cors::{self, AllowCors, AccessControlAllowOrigin};
 
@@ -452,10 +453,10 @@ mod tests {
 	use std::sync::Arc;
 	use std::str::FromStr;
 	use hyper::Method as HttpMethod;
-	use crypto::publickey::Public;
-	use traits::KeyServer;
-	use key_server::tests::DummyKeyServer;
-	use types::NodeAddress;
+	use parity_crypto::publickey::Public;
+	use crate::traits::KeyServer;
+	use crate::key_server::tests::DummyKeyServer;
+	use crate::types::NodeAddress;
 	use parity_runtime::Runtime;
 	use ethereum_types::H256;
 	use super::{parse_request, Request, KeyServerHttpListener};

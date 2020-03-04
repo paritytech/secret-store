@@ -1,0 +1,38 @@
+[package]
+name = "parity-secretstore-substrate-runtime-primitives"
+version = "1.0.0"
+authors = ["Parity Technologies <admin@parity.io>"]
+edition = "2018"
+
+[dependencies]
+codec = { package = "parity-scale-codec", version = "1.0.0", default-features = false, features = ["derive"] }
+
+[dependencies.sp-api]
+git = "https://github.com/paritytech/substrate"
+rev = "40b1e530870cd5c1803fdd39b6386dcaa6a770fb"
+package = "sp-api"
+
+[dependencies.sp-core]
+git = "https://github.com/paritytech/substrate"
+rev = "40b1e530870cd5c1803fdd39b6386dcaa6a770fb"
+package = "sp-core"
+
+[dependencies.sp-runtime]
+git = "https://github.com/paritytech/substrate"
+rev = "40b1e530870cd5c1803fdd39b6386dcaa6a770fb"
+package = "sp-runtime"
+
+[dependencies.sp-std]
+git = "https://github.com/paritytech/substrate"
+rev = "40b1e530870cd5c1803fdd39b6386dcaa6a770fb"
+package = "sp-std"
+
+[features]
+default = ["std"]
+std = [
+	"codec/std",
+	"sp-api/std",
+	"sp-core/std",
+	"sp-runtime/std",
+	"sp-std/std",
+]

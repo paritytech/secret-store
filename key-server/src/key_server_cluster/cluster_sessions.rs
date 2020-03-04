@@ -15,18 +15,20 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::time::{Duration, Instant};
-use std::sync::{Arc, Weak};
-use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::{VecDeque, BTreeMap, BTreeSet};
 use futures::{oneshot, Oneshot, Complete, Future};
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, RwLock, Condvar};
-use ethereum_types::H256;
+use ethereum_types::{Address, H256};
 use parity_crypto::publickey::Secret;
-use crate::blockchain::SigningKeyPair;
+use primitives::acl_storage::AclStorage;
+use primitives::key_storage::KeyStorage;
+use primitives::key_server_key_pair::KeyServerKeyPair;
+use crate::network::ConnectionProvider;
 use crate::key_server_cluster::{Error, NodeId, SessionId};
-use crate::key_server_cluster::cluster::{Cluster, ClusterConfiguration, ClusterView};
-use crate::key_server_cluster::cluster_connections::ConnectionProvider;
+use crate::key_server_cluster::cluster::{Cluster, ClusterView};
 use crate::key_server_cluster::connection_trigger::ServersSetChangeSessionCreatorConnector;
 use crate::key_server_cluster::message::{self, Message};
 use crate::key_server_cluster::generation_session::{SessionImpl as GenerationSessionImpl};
@@ -190,11 +192,11 @@ pub struct ClusterSessionsContainer<S: ClusterSession, SC: ClusterSessionCreator
 	/// Active sessions.
 	sessions: RwLock<BTreeMap<S::Id, QueuedSession<S>>>,
 	/// Listeners. Lock order: sessions -> listeners.
-	listeners: Mutex<Vec<Weak<dyn ClusterSessionsListener<S>>>>,
+	listeners: Mutex<Vec<Arc<dyn ClusterSessionsListener<S>>>>,
 	/// Sessions container state.
 	container_state: Arc<Mutex<ClusterSessionsContainerState>>,
 	/// Do not actually remove sessions.
-	preserve_sessions: bool,
+	preserve_sessions: AtomicBool,
 }
 
 /// Session and its message queue.
@@ -226,11 +228,21 @@ pub enum ClusterSessionsContainerState {
 
 impl ClusterSessions {
 	/// Create new cluster sessions container.
-	pub fn new(config: &ClusterConfiguration, servers_set_change_session_creator_connector: Arc<dyn ServersSetChangeSessionCreatorConnector>) -> Self {
+	pub fn new(
+		self_node_id: NodeId,
+		admin_address: Option<Address>,
+		key_storage: Arc<dyn KeyStorage>,
+		acl_storage: Arc<dyn AclStorage>,
+		servers_set_change_session_creator_connector: Arc<dyn ServersSetChangeSessionCreatorConnector>,
+	) -> Self {
 		let container_state = Arc::new(Mutex::new(ClusterSessionsContainerState::Idle));
-		let creator_core = Arc::new(SessionCreatorCore::new(config));
+		let creator_core = Arc::new(SessionCreatorCore::new(
+			self_node_id,
+			key_storage,
+			acl_storage,
+		));
 		ClusterSessions {
-			self_node_id: config.self_key_pair.public().clone(),
+			self_node_id,
 			generation_sessions: ClusterSessionsContainer::new(GenerationSessionCreator {
 				core: creator_core.clone(),
 				make_faulty_generation_sessions: AtomicBool::new(false),
@@ -253,7 +265,7 @@ impl ClusterSessions {
 			admin_sessions: ClusterSessionsContainer::new(AdminSessionCreator {
 				core: creator_core.clone(),
 				servers_set_change_session_creator_connector: servers_set_change_session_creator_connector,
-				admin_public: config.admin_public.clone(),
+				admin_address: admin_address,
 			}, container_state),
 			creator_core: creator_core,
 		}
@@ -265,14 +277,14 @@ impl ClusterSessions {
 	}
 
 	#[cfg(test)]
-	pub fn preserve_sessions(&mut self) {
-		self.generation_sessions.preserve_sessions = true;
-		self.encryption_sessions.preserve_sessions = true;
-		self.decryption_sessions.preserve_sessions = true;
-		self.schnorr_signing_sessions.preserve_sessions = true;
-		self.ecdsa_signing_sessions.preserve_sessions = true;
-		self.negotiation_sessions.preserve_sessions = true;
-		self.admin_sessions.preserve_sessions = true;
+	pub fn preserve_sessions(&self) {
+		self.generation_sessions.preserve_sessions.store(true, Ordering::Relaxed);
+		self.encryption_sessions.preserve_sessions.store(true, Ordering::Relaxed);
+		self.decryption_sessions.preserve_sessions.store(true, Ordering::Relaxed);
+		self.schnorr_signing_sessions.preserve_sessions.store(true, Ordering::Relaxed);
+		self.ecdsa_signing_sessions.preserve_sessions.store(true, Ordering::Relaxed);
+		self.negotiation_sessions.preserve_sessions.store(true, Ordering::Relaxed);
+		self.admin_sessions.preserve_sessions.store(true, Ordering::Relaxed);
 	}
 
 	/// Send session-level keep-alive messages.
@@ -318,12 +330,12 @@ impl<S, SC> ClusterSessionsContainer<S, SC> where S: ClusterSession, SC: Cluster
 			sessions: RwLock::new(BTreeMap::new()),
 			listeners: Mutex::new(Vec::new()),
 			container_state: container_state,
-			preserve_sessions: false,
+			preserve_sessions: AtomicBool::new(false),
 		}
 	}
 
 	pub fn add_listener(&self, listener: Arc<dyn ClusterSessionsListener<S>>) {
-		self.listeners.lock().push(Arc::downgrade(&listener));
+		self.listeners.lock().push(listener);
 	}
 
 	#[cfg(test)]
@@ -433,7 +445,7 @@ impl<S, SC> ClusterSessionsContainer<S, SC> where S: ClusterSession, SC: Cluster
 	}
 
 	fn do_remove(&self, session_id: &S::Id, sessions: &mut BTreeMap<S::Id, QueuedSession<S>>) {
-		if !self.preserve_sessions {
+		if !self.preserve_sessions.load(Ordering::Relaxed) {
 			if let Some(session) = sessions.remove(session_id) {
 				self.container_state.lock().on_session_completed();
 				self.notify_listeners(|l| l.on_session_removed(session.session.clone()));
@@ -442,18 +454,11 @@ impl<S, SC> ClusterSessionsContainer<S, SC> where S: ClusterSession, SC: Cluster
 	}
 
 	fn notify_listeners<F: Fn(&dyn ClusterSessionsListener<S>) -> ()>(&self, callback: F) {
-		let mut listeners = self.listeners.lock();
+		let listeners = self.listeners.lock();
 		let mut listener_index = 0;
 		while listener_index < listeners.len() {
-			match listeners[listener_index].upgrade() {
-				Some(listener) => {
-					callback(&*listener);
-					listener_index += 1;
-				},
-				None => {
-					listeners.swap_remove(listener_index);
-				},
-			}
+			callback(&*listeners[listener_index]);
+			listener_index += 1;
 		}
 	}
 }
@@ -649,7 +654,7 @@ impl<T> CompletionSignal<T> {
 	}
 }
 
-pub fn create_cluster_view(self_key_pair: Arc<dyn SigningKeyPair>, connections: Arc<dyn ConnectionProvider>, requires_all_connections: bool) -> Result<Arc<dyn Cluster>, Error> {
+pub fn create_cluster_view(self_key_pair: Arc<dyn KeyServerKeyPair>, connections: Arc<dyn ConnectionProvider>, requires_all_connections: bool) -> Result<Arc<dyn Cluster>, Error> {
 	let mut connected_nodes = connections.connected_nodes()?;
 	let disconnected_nodes = connections.disconnected_nodes();
 
@@ -660,7 +665,7 @@ pub fn create_cluster_view(self_key_pair: Arc<dyn SigningKeyPair>, connections: 
 		}
 	}
 
-	connected_nodes.insert(self_key_pair.public().clone());
+	connected_nodes.insert(self_key_pair.address());
 
 	let connected_nodes_count = connected_nodes.len();
 	Ok(Arc::new(ClusterView::new(self_key_pair, connections, connected_nodes, connected_nodes_count + disconnected_nodes_count)))
@@ -671,8 +676,10 @@ mod tests {
 	use std::sync::Arc;
 	use std::sync::atomic::{AtomicUsize, Ordering};
 	use parity_crypto::publickey::{Random, Generator};
-	use crate::key_server_cluster::{Error, DummyAclStorage, DummyKeyStorage, MapKeyServerSet, PlainNodeKeyPair};
-	use crate::key_server_cluster::cluster::ClusterConfiguration;
+	use primitives::acl_storage::InMemoryPermissiveAclStorage;
+	use primitives::key_storage::InMemoryKeyStorage;
+	use primitives::key_server_key_pair::{KeyServerKeyPair, InMemoryKeyServerKeyPair};
+	use crate::key_server_cluster::{Error, math};
 	use crate::key_server_cluster::connection_trigger::SimpleServersSetChangeSessionCreatorConnector;
 	use crate::key_server_cluster::cluster::tests::DummyCluster;
 	use crate::key_server_cluster::generation_session::{SessionImpl as GenerationSession};
@@ -681,17 +688,19 @@ mod tests {
 
 	pub fn make_cluster_sessions() -> ClusterSessions {
 		let key_pair = Random.generate();
-		let config = ClusterConfiguration {
-			self_key_pair: Arc::new(PlainNodeKeyPair::new(key_pair.clone())),
-			key_server_set: Arc::new(MapKeyServerSet::new(false, vec![(key_pair.public().clone(), format!("127.0.0.1:{}", 100).parse().unwrap())].into_iter().collect())),
-			key_storage: Arc::new(DummyKeyStorage::default()),
-			acl_storage: Arc::new(DummyAclStorage::default()),
-			admin_public: Some(Random.generate().public().clone()),
-			preserve_sessions: false,
-		};
-		ClusterSessions::new(&config, Arc::new(SimpleServersSetChangeSessionCreatorConnector {
-			admin_public: Some(Random.generate().public().clone()),
-		}))
+		let self_key_pair = Arc::new(InMemoryKeyServerKeyPair::new(key_pair.clone()));
+		let admin_address = Some(math::generate_random_address().unwrap());
+		let key_storage = Arc::new(InMemoryKeyStorage::default());
+		let acl_storage = Arc::new(InMemoryPermissiveAclStorage::default());
+		ClusterSessions::new(
+			self_key_pair.address(),
+			admin_address,
+			key_storage,
+			acl_storage,
+			Arc::new(SimpleServersSetChangeSessionCreatorConnector {
+				admin_address,
+			}),
+		)
 	}
 
 	#[test]

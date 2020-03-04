@@ -21,7 +21,8 @@ use parking_lot::Mutex;
 use parity_crypto::publickey::{Public, Secret};
 use ethereum_types::H256;
 use log::warn;
-use crate::key_server_cluster::{Error, NodeId, SessionId, Requester, SessionMeta, AclStorage, DocumentKeyShare};
+use primitives::{acl_storage::AclStorage, key_storage::KeyShare};
+use crate::key_server_cluster::{Error, NodeId, SessionId, Requester, SessionMeta};
 use crate::key_server_cluster::cluster::{Cluster};
 use crate::key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
 use crate::key_server_cluster::generation_session::{SessionImpl as GenerationSession, SessionParams as GenerationSessionParams,
@@ -56,7 +57,7 @@ struct SessionCore {
 	/// Signing session access key.
 	pub access_key: Secret,
 	/// Key share.
-	pub key_share: Option<DocumentKeyShare>,
+	pub key_share: Option<KeyShare>,
 	/// Cluster which allows this node to send messages to other nodes in the cluster.
 	pub cluster: Arc<dyn Cluster>,
 	/// Session-level nonce.
@@ -105,7 +106,7 @@ pub struct SessionParams {
 	/// Session access key.
 	pub access_key: Secret,
 	/// Key share.
-	pub key_share: Option<DocumentKeyShare>,
+	pub key_share: Option<KeyShare>,
 	/// ACL storage.
 	pub acl_storage: Arc<dyn AclStorage>,
 	/// Cluster
@@ -821,8 +822,8 @@ mod tests {
 	use std::collections::BTreeMap;
 	use ethereum_types::{Address, H256};
 	use parity_crypto::publickey::{Random, Generator, Public, Secret, public_to_address};
-	use crate::acl_storage::DummyAclStorage;
-	use crate::key_server_cluster::{SessionId, Requester, SessionMeta, Error, KeyStorage};
+	use primitives::{acl_storage::InMemoryPermissiveAclStorage, key_storage::KeyStorage};
+	use crate::key_server_cluster::{SessionId, Requester, SessionMeta, Error};
 	use crate::key_server_cluster::cluster::tests::MessageLoop as ClusterMessageLoop;
 	use crate::key_server_cluster::generation_session::tests::MessageLoop as GenerationMessageLoop;
 	use crate::key_server_cluster::math;
@@ -858,7 +859,7 @@ mod tests {
 				},
 				access_key: Random.generate().secret().clone(),
 				key_share: self.0.key_storage(at_node).get(&dummy_doc).unwrap(),
-				acl_storage: Arc::new(DummyAclStorage::default()),
+				acl_storage: Arc::new(InMemoryPermissiveAclStorage::default()),
 				cluster: self.0.cluster(0).view().unwrap(),
 				nonce: 0,
 			}, requester).unwrap().0
@@ -1064,8 +1065,8 @@ mod tests {
 
 		// we need at least 2-of-3 nodes to agree to reach consensus
 		// let's say 2 of 3 nodes disagee
-		ml.0.acl_storage(1).prohibit(public_to_address(&requester), SessionId::from([1u8; 32]));
-		ml.0.acl_storage(2).prohibit(public_to_address(&requester), SessionId::from([1u8; 32]));
+		ml.0.acl_storage(1).forbid(public_to_address(&requester), SessionId::from([1u8; 32]));
+		ml.0.acl_storage(2).forbid(public_to_address(&requester), SessionId::from([1u8; 32]));
 
 		// then consensus is unreachable
 		ml.0.loop_until(|| ml.0.is_empty());
@@ -1078,7 +1079,7 @@ mod tests {
 
 		// we need at least 2-of-3 nodes to agree to reach consensus
 		// let's say 1 of 3 nodes disagree
-		ml.0.acl_storage(1).prohibit(public_to_address(&requester), SessionId::from([1u8; 32]));
+		ml.0.acl_storage(1).forbid(public_to_address(&requester), SessionId::from([1u8; 32]));
 
 		// then consensus reachable, but single node will disagree
 		ml.ensure_completed();
@@ -1090,7 +1091,7 @@ mod tests {
 
 		// we need at least 2-of-3 nodes to agree to reach consensus
 		// let's say 1 of 3 nodes disagree
-		ml.0.acl_storage(0).prohibit(public_to_address(&requester), SessionId::from([1u8; 32]));
+		ml.0.acl_storage(0).forbid(public_to_address(&requester), SessionId::from([1u8; 32]));
 
 		// then consensus reachable, but single node will disagree
 		ml.ensure_completed();

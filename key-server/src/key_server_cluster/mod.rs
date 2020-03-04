@@ -16,26 +16,13 @@
 
 use super::types::ServerKeyId;
 
-pub use super::blockchain::SigningKeyPair;
 pub use super::types::{Error, NodeId, Requester, EncryptedDocumentKeyShadow};
-pub use super::acl_storage::AclStorage;
-pub use super::key_storage::{KeyStorage, DocumentKeyShare, DocumentKeyShareVersion};
-pub use super::key_server_set::{is_migration_required, KeyServerSet, KeyServerSetSnapshot, KeyServerSetMigration};
 pub use super::serialization::{SerializableSignature, SerializableH256, SerializableSecret, SerializablePublic,
 	SerializableRequester, SerializableMessageHash, SerializableAddress};
-pub use self::cluster::{new_network_cluster, ClusterCore, ClusterConfiguration, ClusterClient};
-pub use self::cluster_connections_net::NetConnectionsManagerConfig;
+pub use self::cluster::{ClusterCore, ClusterClient, create_cluster};
 pub use self::cluster_sessions::{ClusterSession, ClusterSessionsListener, WaitableSession};
 #[cfg(test)]
 pub use self::cluster::tests::DummyClusterClient;
-
-#[cfg(test)]
-pub use super::node_key_pair::PlainNodeKeyPair;
-#[cfg(test)]
-pub use super::key_storage::tests::DummyKeyStorage;
-pub use super::acl_storage::DummyAclStorage;
-#[cfg(test)]
-pub use super::key_server_set::tests::MapKeyServerSet;
 
 pub type SessionId = ServerKeyId;
 
@@ -70,16 +57,13 @@ pub use self::client_sessions::generation_session;
 pub use self::client_sessions::signing_session_ecdsa;
 pub use self::client_sessions::signing_session_schnorr;
 
-mod cluster;
-mod cluster_connections;
-mod cluster_connections_net;
-mod cluster_message_processor;
-mod cluster_sessions;
+pub mod cluster;
+pub mod cluster_message_processor;
+pub mod cluster_sessions;
 mod cluster_sessions_creator;
-mod connection_trigger;
-mod connection_trigger_with_migration;
-mod io;
+pub mod connection_trigger;
+pub mod connection_trigger_with_migration;
+pub mod io;
 mod jobs;
 pub mod math;
-mod message;
-mod net;
+pub mod message;

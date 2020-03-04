@@ -16,7 +16,8 @@
 
 use std::sync::Arc;
 use std::collections::{BTreeSet, BTreeMap};
-use crate::key_server_cluster::{Error, NodeId, SessionId, KeyStorage};
+use primitives::key_storage::KeyStorage;
+use crate::key_server_cluster::{Error, NodeId, SessionId};
 use crate::key_server_cluster::jobs::job_session::{JobPartialRequestAction, JobPartialResponseAction, JobExecutor};
 
 /// Unknown sessions report job.

@@ -15,7 +15,7 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::{BTreeSet, BTreeMap};
-use parity_crypto::publickey::{Public, Signature, recover};
+use parity_crypto::publickey::{Address, Signature, verify_address};
 use tiny_keccak::Keccak;
 use crate::key_server_cluster::{Error, NodeId, SessionId};
 use crate::key_server_cluster::message::{InitializeConsensusSessionWithServersSet, InitializeConsensusSessionOfShareAdd};
@@ -24,7 +24,7 @@ use crate::key_server_cluster::jobs::job_session::{JobPartialResponseAction, Job
 /// Purpose of this job is to check if requestor is administrator of SecretStore (i.e. it have access to change key servers set).
 pub struct ServersSetChangeAccessJob {
 	/// Servers set administrator public key (this could be changed to ACL-based check later).
-	administrator: Public,
+	administrator: Address,
 	/// Old servers set.
 	old_servers_set: Option<BTreeSet<NodeId>>,
 	/// New servers set.
@@ -70,7 +70,7 @@ impl<'a> From<&'a InitializeConsensusSessionOfShareAdd> for ServersSetChangeAcce
 }
 
 impl ServersSetChangeAccessJob {
-	pub fn new_on_slave(administrator: Public) -> Self {
+	pub fn new_on_slave(administrator: Address) -> Self {
 		ServersSetChangeAccessJob {
 			administrator: administrator,
 			old_servers_set: None,
@@ -80,7 +80,7 @@ impl ServersSetChangeAccessJob {
 		}
 	}
 
-	pub fn new_on_master(administrator: Public, old_servers_set: BTreeSet<NodeId>, new_servers_set: BTreeSet<NodeId>, old_set_signature: Signature, new_set_signature: Signature) -> Self {
+	pub fn new_on_master(administrator: Address, old_servers_set: BTreeSet<NodeId>, new_servers_set: BTreeSet<NodeId>, old_set_signature: Signature, new_set_signature: Signature) -> Self {
 		ServersSetChangeAccessJob {
 			administrator: administrator,
 			old_servers_set: Some(old_servers_set),
@@ -119,9 +119,9 @@ impl JobExecutor for ServersSetChangeAccessJob {
 		} = partial_request;
 
 		// check old servers set signature
-		let old_actual_public = recover(&old_set_signature, &ordered_nodes_hash(&old_servers_set).into())?;
-		let new_actual_public = recover(&new_set_signature, &ordered_nodes_hash(&new_servers_set).into())?;
-		let is_administrator = old_actual_public == self.administrator && new_actual_public == self.administrator;
+		let old_signed_by_admin = verify_address(&self.administrator, &old_set_signature, &ordered_nodes_hash(&old_servers_set).into())?;
+		let new_signed_by_admin = verify_address(&self.administrator, &new_set_signature, &ordered_nodes_hash(&new_servers_set).into())?;
+		let is_administrator = old_signed_by_admin && new_signed_by_admin;
 		self.new_servers_set = Some(new_servers_set);
 
 		Ok(if is_administrator { JobPartialRequestAction::Respond(true) } else { JobPartialRequestAction::Reject(false) })

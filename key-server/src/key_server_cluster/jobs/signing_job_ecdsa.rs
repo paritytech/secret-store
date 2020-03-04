@@ -17,14 +17,15 @@
 use std::collections::{BTreeSet, BTreeMap};
 use parity_crypto::publickey::{Public, Secret, Signature};
 use ethereum_types::H256;
-use crate::key_server_cluster::{Error, NodeId, DocumentKeyShare};
+use primitives::key_storage::KeyShare;
+use crate::key_server_cluster::{Error, NodeId};
 use crate::key_server_cluster::math;
 use crate::key_server_cluster::jobs::job_session::{JobPartialRequestAction, JobPartialResponseAction, JobExecutor};
 
 /// Signing job.
 pub struct EcdsaSigningJob {
 	/// Key share.
-	key_share: DocumentKeyShare,
+	key_share: KeyShare,
 	/// Key version.
 	key_version: H256,
 	/// Share of inv(nonce).
@@ -59,7 +60,7 @@ pub struct EcdsaPartialSigningResponse {
 }
 
 impl EcdsaSigningJob {
-	pub fn new_on_slave(key_share: DocumentKeyShare, key_version: H256, nonce_public: Public, inv_nonce_share: Secret) -> Result<Self, Error> {
+	pub fn new_on_slave(key_share: KeyShare, key_version: H256, nonce_public: Public, inv_nonce_share: Secret) -> Result<Self, Error> {
 		Ok(EcdsaSigningJob {
 			key_share: key_share,
 			key_version: key_version,
@@ -71,7 +72,7 @@ impl EcdsaSigningJob {
 		})
 	}
 
-	pub fn new_on_master(key_share: DocumentKeyShare, key_version: H256, nonce_public: Public, inv_nonce_share: Secret, inversed_nonce_coeff: Secret, message_hash: H256) -> Result<Self, Error> {
+	pub fn new_on_master(key_share: KeyShare, key_version: H256, nonce_public: Public, inv_nonce_share: Secret, inversed_nonce_coeff: Secret, message_hash: H256) -> Result<Self, Error> {
 		Ok(EcdsaSigningJob {
 			key_share: key_share,
 			key_version: key_version,

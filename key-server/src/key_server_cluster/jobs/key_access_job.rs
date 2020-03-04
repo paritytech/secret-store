@@ -16,7 +16,8 @@
 
 use std::sync::Arc;
 use std::collections::{BTreeSet, BTreeMap};
-use crate::key_server_cluster::{Error, NodeId, SessionId, Requester, AclStorage};
+use primitives::acl_storage::AclStorage;
+use crate::key_server_cluster::{Error, NodeId, SessionId, Requester};
 use crate::key_server_cluster::jobs::job_session::{JobPartialResponseAction, JobPartialRequestAction, JobExecutor};
 
 /// Purpose of this job is to construct set of nodes, which have agreed to provide access to the given key for the given requestor.
@@ -78,7 +79,7 @@ impl JobExecutor for KeyAccessJob {
 		}
 
 		self.requester = Some(partial_request.clone());
-		self.acl_storage.check(partial_request.address(&self.id).map_err(Error::InsufficientRequesterData)?, &self.id)
+		self.acl_storage.check(partial_request.address(&self.id)?, &self.id)
 			.map(|is_confirmed| if is_confirmed { JobPartialRequestAction::Respond(true) } else { JobPartialRequestAction::Reject(false) })
 	}
 

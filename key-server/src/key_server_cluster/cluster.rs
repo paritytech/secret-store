@@ -15,36 +15,34 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
-use std::collections::{BTreeMap, BTreeSet};
-use parking_lot::RwLock;
+use std::collections::BTreeSet;
 use parity_crypto::publickey::{Public, Signature, Random, Generator};
 use ethereum_types::{Address, H256};
-use parity_runtime::Executor;
 use log::trace;
-use crate::blockchain::SigningKeyPair;
-use crate::key_server_cluster::{Error, NodeId, SessionId, Requester, AclStorage, KeyStorage, KeyServerSet};
+use primitives::acl_storage::AclStorage;
+use primitives::key_storage::KeyStorage;
+use primitives::key_server_key_pair::KeyServerKeyPair;
+use primitives::service::{
+	ServiceTasksListener,
+	ServiceTasksListenerRegistrar,
+};
+use crate::network::{ConnectionProvider, ConnectionManager};
+use crate::key_server_cluster::{Error, NodeId, SessionId, Requester};
 use crate::key_server_cluster::cluster_sessions::{WaitableSession, ClusterSession, AdminSession, ClusterSessions,
 	SessionIdWithSubSession, ClusterSessionsContainer, SERVERS_SET_CHANGE_SESSION_ID, create_cluster_view,
 	AdminSessionCreationData, ClusterSessionsListener};
 use crate::key_server_cluster::cluster_sessions_creator::ClusterSessionCreator;
-use crate::key_server_cluster::cluster_connections::{ConnectionProvider, ConnectionManager};
-use crate::key_server_cluster::cluster_connections_net::{NetConnectionsManager,
-	NetConnectionsContainer, NetConnectionsManagerConfig};
-use crate::key_server_cluster::cluster_message_processor::{MessageProcessor, SessionsMessageProcessor};
+use crate::key_server_cluster::cluster_message_processor::MessageProcessor;
 use crate::key_server_cluster::message::Message;
 use crate::key_server_cluster::generation_session::{SessionImpl as GenerationSession};
 use crate::key_server_cluster::decryption_session::{SessionImpl as DecryptionSession};
 use crate::key_server_cluster::encryption_session::{SessionImpl as EncryptionSession};
+use crate::key_server_cluster::cluster_message_processor::SessionsMessageProcessor;
 use crate::key_server_cluster::signing_session_ecdsa::{SessionImpl as EcdsaSigningSession};
 use crate::key_server_cluster::signing_session_schnorr::{SessionImpl as SchnorrSigningSession};
 use crate::key_server_cluster::key_version_negotiation_session::{SessionImpl as KeyVersionNegotiationSession,
-	IsolatedSessionTransport as KeyVersionNegotiationSessionTransport, ContinueAction};
-use crate::key_server_cluster::connection_trigger::{ConnectionTrigger,
-	SimpleConnectionTrigger, ServersSetChangeSessionCreatorConnector};
-use crate::key_server_cluster::connection_trigger_with_migration::ConnectionTriggerWithMigration;
-
-#[cfg(test)]
-use crate::key_server_cluster::cluster_connections::tests::{MessagesQueue, TestConnections, new_test_connections};
+	IsolatedSessionTransport as KeyVersionNegotiationSessionTransport, ContinueAction, FailedContinueAction};
+use crate::key_server_cluster::connection_trigger::ServersSetChangeSessionCreatorConnector;
 
 /// Cluster interface for external clients.
 pub trait ClusterClient: Send + Sync {
@@ -105,12 +103,8 @@ pub trait ClusterClient: Send + Sync {
 		new_set_signature: Signature,
 	) -> Result<WaitableSession<AdminSession>, Error>;
 
-	/// Listen for new generation sessions.
-	fn add_generation_listener(&self, listener: Arc<dyn ClusterSessionsListener<GenerationSession>>);
-	/// Listen for new decryption sessions.
-	fn add_decryption_listener(&self, listener: Arc<dyn ClusterSessionsListener<DecryptionSession>>);
-	/// Listen for new key version negotiation sessions.
-	fn add_key_version_negotiation_listener(&self, listener: Arc<dyn ClusterSessionsListener<KeyVersionNegotiationSession<KeyVersionNegotiationSessionTransport>>>);
+	/// Return cluster session listener registrar.
+	fn session_listener_registrar(&self) -> Arc<dyn ServiceTasksListenerRegistrar>;
 
 	/// Ask node to make 'faulty' generation sessions.
 	#[cfg(test)]
@@ -141,23 +135,6 @@ pub trait Cluster: Send + Sync {
 	fn connected_nodes_count(&self) -> usize;
 }
 
-/// Cluster initialization parameters.
-#[derive(Clone)]
-pub struct ClusterConfiguration {
-	/// KeyPair this node holds.
-	pub self_key_pair: Arc<dyn SigningKeyPair>,
-	/// Cluster nodes set.
-	pub key_server_set: Arc<dyn KeyServerSet>,
-	/// Reference to key storage
-	pub key_storage: Arc<dyn KeyStorage>,
-	/// Reference to ACL storage
-	pub acl_storage: Arc<dyn AclStorage>,
-	/// Administrator public key.
-	pub admin_public: Option<Public>,
-	/// Do not remove sessions from container.
-	pub preserve_sessions: bool,
-}
-
 /// Network cluster implementation.
 pub struct ClusterCore<C: ConnectionManager> {
 	/// Cluster data.
@@ -170,22 +147,32 @@ pub struct ClusterClientImpl<C: ConnectionManager> {
 	data: Arc<ClusterData<C>>,
 }
 
+/// Session listener registrar.
+struct ClusterSessionListenerRegistrar<C: ConnectionManager> {
+	/// Cluster data.
+	data: Arc<ClusterData<C>>,
+}
+
 /// Network cluster view. It is a communication channel, required in single session.
 pub struct ClusterView {
 	configured_nodes_count: usize,
 	connected_nodes: BTreeSet<NodeId>,
 	connections: Arc<dyn ConnectionProvider>,
-	self_key_pair: Arc<dyn SigningKeyPair>,
+	self_key_pair: Arc<dyn KeyServerKeyPair>,
 }
 
 /// Cross-thread shareable cluster data.
 pub struct ClusterData<C: ConnectionManager> {
-	/// Cluster configuration.
-	pub config: ClusterConfiguration,
 	/// KeyPair this node holds.
-	pub self_key_pair: Arc<dyn SigningKeyPair>,
+	pub self_key_pair: Arc<dyn KeyServerKeyPair>,
+	/// Reference to key storage
+	pub key_storage: Arc<dyn KeyStorage>,
+	/// Reference to ACL storage
+	pub acl_storage: Arc<dyn AclStorage>,
+	/// Administrator public key.
+	pub admin_address: Option<Address>,
 	/// Connections data.
-	pub connections: C,
+	pub connections: Arc<C>,
 	/// Active sessions data.
 	pub sessions: Arc<ClusterSessions>,
 	// Messages processor.
@@ -194,95 +181,50 @@ pub struct ClusterData<C: ConnectionManager> {
 	pub servers_set_change_creator_connector: Arc<dyn ServersSetChangeSessionCreatorConnector>,
 }
 
-/// Create new network-backed cluster.
-pub fn new_network_cluster(
-	executor: Executor,
-	config: ClusterConfiguration,
-	net_config: NetConnectionsManagerConfig
-) -> Result<Arc<ClusterCore<NetConnectionsManager>>, Error> {
-	let mut nodes = config.key_server_set.snapshot().current_set;
-	let is_isolated = nodes.remove(config.self_key_pair.public()).is_none();
-	let connections_data = Arc::new(RwLock::new(NetConnectionsContainer {
-		is_isolated,
-		nodes,
-		connections: BTreeMap::new(),
-	}));
-
-	let connection_trigger: Box<dyn ConnectionTrigger> = match net_config.auto_migrate_enabled {
-		false => Box::new(SimpleConnectionTrigger::with_config(&config)),
-		true if config.admin_public.is_none() => Box::new(ConnectionTriggerWithMigration::with_config(&config)),
-		true => return Err(Error::Internal(
-			"secret store admininstrator public key is specified with auto-migration enabled".into()
-		)),
-	};
-
-	let servers_set_change_creator_connector = connection_trigger.servers_set_change_creator_connector();
-	let sessions = Arc::new(ClusterSessions::new(&config, servers_set_change_creator_connector.clone()));
-	let message_processor = Arc::new(SessionsMessageProcessor::new(
-		config.self_key_pair.clone(),
+/// Create cluster.
+pub fn create_cluster<CM: ConnectionManager>(
+	self_key_pair: Arc<dyn KeyServerKeyPair>,
+	admin_address: Option<Address>,
+	key_storage: Arc<dyn KeyStorage>,
+	acl_storage: Arc<dyn AclStorage>,
+	servers_set_change_creator_connector: Arc<dyn ServersSetChangeSessionCreatorConnector>,
+	connection_provider: Arc<dyn ConnectionProvider>,
+	make_connections_manager: impl FnOnce(Arc<dyn MessageProcessor>) -> Result<Arc<CM>, Error>,
+) -> Result<Arc<ClusterCore<CM>>, Error> {
+	let sessions = Arc::new(ClusterSessions::new(
+		self_key_pair.address(),
+		admin_address,
+		key_storage.clone(),
+		acl_storage.clone(),
 		servers_set_change_creator_connector.clone(),
-		sessions.clone(),
-		connections_data.clone()));
-
-	let connections = NetConnectionsManager::new(
-		executor,
-		message_processor.clone(),
-		connection_trigger,
-		connections_data,
-		&config,
-		net_config)?;
-	connections.start()?;
-
-	ClusterCore::new(sessions, message_processor, connections, servers_set_change_creator_connector, config)
-}
-
-/// Create new in-memory backed cluster
-#[cfg(test)]
-pub fn new_test_cluster(
-	messages: MessagesQueue,
-	config: ClusterConfiguration,
-) -> Result<Arc<ClusterCore<Arc<TestConnections>>>, Error> {
-	let nodes = config.key_server_set.snapshot().current_set;
-	let connections = new_test_connections(messages, *config.self_key_pair.public(), nodes.keys().cloned().collect());
-
-	let connection_trigger = Box::new(SimpleConnectionTrigger::with_config(&config));
-	let servers_set_change_creator_connector = connection_trigger.servers_set_change_creator_connector();
-	let mut sessions = ClusterSessions::new(&config, servers_set_change_creator_connector.clone());
-	if config.preserve_sessions {
-		sessions.preserve_sessions();
-	}
-	let sessions = Arc::new(sessions);
-
-	let message_processor = Arc::new(SessionsMessageProcessor::new(
-		config.self_key_pair.clone(),
-		servers_set_change_creator_connector.clone(),
-		sessions.clone(),
-		connections.provider(),
 	));
+	let message_processor = Arc::new(SessionsMessageProcessor::new(
+		self_key_pair.clone(),
+		servers_set_change_creator_connector.clone(),
+		sessions.clone(),
+		connection_provider,
+	));
+	
+	let connections_manager = make_connections_manager(message_processor.clone())?;
+	let cluster = Arc::new(ClusterCore {
+		data: Arc::new(ClusterData {
+			self_key_pair,
+			connections: connections_manager,
+			sessions,
+			key_storage,
+			acl_storage,
+			admin_address,
+			message_processor,
+			servers_set_change_creator_connector
+		}),
+	});
 
-	ClusterCore::new(sessions, message_processor, connections, servers_set_change_creator_connector, config)
+	cluster.run()?;
+
+	Ok(cluster)
 }
 
 impl<C: ConnectionManager> ClusterCore<C> {
-	pub fn new(
-		sessions: Arc<ClusterSessions>,
-		message_processor: Arc<dyn MessageProcessor>,
-		connections: C,
-		servers_set_change_creator_connector: Arc<dyn ServersSetChangeSessionCreatorConnector>,
-		config: ClusterConfiguration,
-	) -> Result<Arc<Self>, Error> {
-		Ok(Arc::new(ClusterCore {
-			data: Arc::new(ClusterData {
-				self_key_pair: config.self_key_pair.clone(),
-				connections,
-				sessions: sessions.clone(),
-				config,
-				message_processor,
-				servers_set_change_creator_connector
-			}),
-		}))
-	}
-
 	/// Create new client interface.
 	pub fn client(&self) -> Arc<dyn ClusterClient> {
 		Arc::new(ClusterClientImpl::new(self.data.clone()))
@@ -299,7 +241,7 @@ impl<C: ConnectionManager> ClusterCore<C> {
 		let connections = self.data.connections.provider();
 		let mut connected_nodes = connections.connected_nodes()?;
 		let disconnected_nodes = connections.disconnected_nodes();
-		connected_nodes.insert(self.data.self_key_pair.public().clone());
+		connected_nodes.insert(self.data.self_key_pair.address());
 
 		let connected_nodes_count = connected_nodes.len();
 		let disconnected_nodes_count = disconnected_nodes.len();
@@ -313,7 +255,7 @@ impl<C: ConnectionManager> ClusterCore<C> {
 
 impl ClusterView {
 	pub fn new(
-		self_key_pair: Arc<dyn SigningKeyPair>,
+		self_key_pair: Arc<dyn KeyServerKeyPair>,
 		connections: Arc<dyn ConnectionProvider>,
 		nodes: BTreeSet<NodeId>,
 		configured_nodes_count: usize
@@ -329,8 +271,8 @@ impl ClusterView {
 
 impl Cluster for ClusterView {
 	fn broadcast(&self, message: Message) -> Result<(), Error> {
-		for node in self.connected_nodes.iter().filter(|n| *n != self.self_key_pair.public()) {
-			trace!(target: "secretstore_net", "{}: sent message {} to {}", self.self_key_pair.public(), message, node);
+		for node in self.connected_nodes.iter().filter(|n| **n != self.self_key_pair.address()) {
+			trace!(target: "secretstore_net", "{}: sent message {} to {}", self.self_key_pair.address(), message, node);
 			let connection = self.connections.connection(node).ok_or(Error::NodeDisconnected)?;
 			connection.send_message(message.clone());
 		}
@@ -338,7 +280,7 @@ impl Cluster for ClusterView {
 	}
 
 	fn send(&self, to: &NodeId, message: Message) -> Result<(), Error> {
-		trace!(target: "secretstore_net", "{}: sent message {} to {}", self.self_key_pair.public(), message, to);
+		trace!(target: "secretstore_net", "{}: sent message {} to {}", self.self_key_pair.address(), message, to);
 		let connection = self.connections.connection(to).ok_or(Error::NodeDisconnected)?;
 		connection.send_message(message);
 		Ok(())
@@ -373,12 +315,12 @@ impl<C: ConnectionManager> ClusterClientImpl<C> {
 		session_id: SessionId,
 	) -> Result<WaitableSession<KeyVersionNegotiationSession<KeyVersionNegotiationSessionTransport>>, Error> {
 		let mut connected_nodes = self.data.connections.provider().connected_nodes()?;
-		connected_nodes.insert(self.data.self_key_pair.public().clone());
+		connected_nodes.insert(self.data.self_key_pair.address());
 
 		let access_key = Random.generate().secret().clone();
 		let session_id = SessionIdWithSubSession::new(session_id, access_key);
 		let cluster = create_cluster_view(self.data.self_key_pair.clone(), self.data.connections.provider(), false)?;
-		let session = self.data.sessions.negotiation_sessions.insert(cluster, self.data.self_key_pair.public().clone(), session_id.clone(), None, false, None)?;
+		let session = self.data.sessions.negotiation_sessions.insert(cluster, self.data.self_key_pair.address(), session_id.clone(), None, false, None)?;
 		match session.session.initialize(connected_nodes) {
 			Ok(()) => Ok(session),
 			Err(error) => {
@@ -398,10 +340,10 @@ impl<C: ConnectionManager> ClusterClient for ClusterClientImpl<C> {
 		threshold: usize,
 	) -> Result<WaitableSession<GenerationSession>, Error> {
 		let mut connected_nodes = self.data.connections.provider().connected_nodes()?;
-		connected_nodes.insert(self.data.self_key_pair.public().clone());
+		connected_nodes.insert(self.data.self_key_pair.address());
 
 		let cluster = create_cluster_view(self.data.self_key_pair.clone(), self.data.connections.provider(), true)?;
-		let session = self.data.sessions.generation_sessions.insert(cluster, self.data.self_key_pair.public().clone(), session_id, None, false, None)?;
+		let session = self.data.sessions.generation_sessions.insert(cluster, self.data.self_key_pair.address().clone(), session_id, None, false, None)?;
 		process_initialization_result(
 			session.session.initialize(origin, author, false, threshold, connected_nodes.into()),
 			session, &self.data.sessions.generation_sessions)
@@ -415,10 +357,10 @@ impl<C: ConnectionManager> ClusterClient for ClusterClientImpl<C> {
 		encrypted_point: Public,
 	) -> Result<WaitableSession<EncryptionSession>, Error> {
 		let mut connected_nodes = self.data.connections.provider().connected_nodes()?;
-		connected_nodes.insert(self.data.self_key_pair.public().clone());
+		connected_nodes.insert(self.data.self_key_pair.address().clone());
 
 		let cluster = create_cluster_view(self.data.self_key_pair.clone(), self.data.connections.provider(), true)?;
-		let session = self.data.sessions.encryption_sessions.insert(cluster, self.data.self_key_pair.public().clone(), session_id, None, false, None)?;
+		let session = self.data.sessions.encryption_sessions.insert(cluster, self.data.self_key_pair.address(), session_id, None, false, None)?;
 		process_initialization_result(
 			session.session.initialize(requester, common_point, encrypted_point),
 			session, &self.data.sessions.encryption_sessions)
@@ -434,12 +376,12 @@ impl<C: ConnectionManager> ClusterClient for ClusterClientImpl<C> {
 		is_broadcast_decryption: bool,
 	) -> Result<WaitableSession<DecryptionSession>, Error> {
 		let mut connected_nodes = self.data.connections.provider().connected_nodes()?;
-		connected_nodes.insert(self.data.self_key_pair.public().clone());
+		connected_nodes.insert(self.data.self_key_pair.address().clone());
 
 		let access_key = Random.generate().secret().clone();
 		let session_id = SessionIdWithSubSession::new(session_id, access_key);
 		let cluster = create_cluster_view(self.data.self_key_pair.clone(), self.data.connections.provider(), false)?;
-		let session = self.data.sessions.decryption_sessions.insert(cluster, self.data.self_key_pair.public().clone(),
+		let session = self.data.sessions.decryption_sessions.insert(cluster, self.data.self_key_pair.address().clone(),
 			session_id.clone(), None, false, Some(requester))?;
 
 		let initialization_result = match version {
@@ -472,12 +414,12 @@ impl<C: ConnectionManager> ClusterClient for ClusterClientImpl<C> {
 		message_hash: H256,
 	) -> Result<WaitableSession<SchnorrSigningSession>, Error> {
 		let mut connected_nodes = self.data.connections.provider().connected_nodes()?;
-		connected_nodes.insert(self.data.self_key_pair.public().clone());
+		connected_nodes.insert(self.data.self_key_pair.address().clone());
 
 		let access_key = Random.generate().secret().clone();
 		let session_id = SessionIdWithSubSession::new(session_id, access_key);
 		let cluster = create_cluster_view(self.data.self_key_pair.clone(), self.data.connections.provider(), false)?;
-		let session = self.data.sessions.schnorr_signing_sessions.insert(cluster, self.data.self_key_pair.public().clone(), session_id.clone(), None, false, Some(requester))?;
+		let session = self.data.sessions.schnorr_signing_sessions.insert(cluster, self.data.self_key_pair.address(), session_id.clone(), None, false, Some(requester))?;
 
 		let initialization_result = match version {
 			Some(version) => session.session.initialize(version, message_hash),
@@ -504,12 +446,12 @@ impl<C: ConnectionManager> ClusterClient for ClusterClientImpl<C> {
 		message_hash: H256,
 	) -> Result<WaitableSession<EcdsaSigningSession>, Error> {
 		let mut connected_nodes = self.data.connections.provider().connected_nodes()?;
-		connected_nodes.insert(self.data.self_key_pair.public().clone());
+		connected_nodes.insert(self.data.self_key_pair.address());
 
 		let access_key = Random.generate().secret().clone();
 		let session_id = SessionIdWithSubSession::new(session_id, access_key);
 		let cluster = create_cluster_view(self.data.self_key_pair.clone(), self.data.connections.provider(), false)?;
-		let session = self.data.sessions.ecdsa_signing_sessions.insert(cluster, self.data.self_key_pair.public().clone(), session_id.clone(), None, false, Some(requester))?;
+		let session = self.data.sessions.ecdsa_signing_sessions.insert(cluster, self.data.self_key_pair.address(), session_id.clone(), None, false, Some(requester))?;
 
 		let initialization_result = match version {
 			Some(version) => session.session.initialize(version, message_hash),
@@ -557,16 +499,11 @@ impl<C: ConnectionManager> ClusterClient for ClusterClientImpl<C> {
 			})
 	}
 
-	fn add_generation_listener(&self, listener: Arc<dyn ClusterSessionsListener<GenerationSession>>) {
-		self.data.sessions.generation_sessions.add_listener(listener);
-	}
-
-	fn add_decryption_listener(&self, listener: Arc<dyn ClusterSessionsListener<DecryptionSession>>) {
-		self.data.sessions.decryption_sessions.add_listener(listener);
-	}
-
-	fn add_key_version_negotiation_listener(&self, listener: Arc<dyn ClusterSessionsListener<KeyVersionNegotiationSession<KeyVersionNegotiationSessionTransport>>>) {
-		self.data.sessions.negotiation_sessions.add_listener(listener);
+	/// Return cluster session listener registrar.
+	fn session_listener_registrar(&self) -> Arc<dyn ServiceTasksListenerRegistrar> {
+		Arc::new(ClusterSessionListenerRegistrar {
+			data: self.data.clone(),
+		})
 	}
 
 	#[cfg(test)]
@@ -590,6 +527,107 @@ impl<C: ConnectionManager> ClusterClient for ClusterClientImpl<C> {
 	}
 }
 
+impl<C: ConnectionManager> ServiceTasksListenerRegistrar for ClusterSessionListenerRegistrar<C> {
+	fn register_listener(&self, listener: Arc<dyn ServiceTasksListener>) {
+		use primitives::key_server::{
+			ServerKeyGenerationResult,
+			ServerKeyGenerationParams,
+			ServerKeyGenerationArtifacts,
+			DocumentKeyShadowRetrievalResult,
+			DocumentKeyShadowRetrievalParams,
+			DocumentKeyShadowRetrievalArtifacts,
+		};
+	
+		struct ListenerWrapper(Arc<dyn ServiceTasksListener>);
+
+		impl ClusterSessionsListener<GenerationSession> for ListenerWrapper {
+			fn on_session_removed(&self, session: Arc<GenerationSession>) {
+				// by this time sesion must already be completed - either successfully, or not
+				assert!(session.is_finished());
+
+				let key_id = session.id();
+				if let Some(session_result) = session.result() {
+					self.0.server_key_generated(ServerKeyGenerationResult {
+						origin: session.origin(),
+						params: ServerKeyGenerationParams {
+							key_id,
+						},
+						result: session_result.map(|key| ServerKeyGenerationArtifacts { key }),
+					})
+				}
+			}
+		}
+
+		impl ClusterSessionsListener<DecryptionSession> for ListenerWrapper {
+			fn on_session_removed(&self, session: Arc<DecryptionSession>) {
+				// by this time sesion must already be completed - either successfully, or not
+				assert!(session.is_finished());
+
+				let session_id = session.id();
+				let key_id = session_id.id;
+				if let Some(session_result) = session.result() {
+					let session_side_result = (
+						session.is_shadow_decryption_requested(),
+						session.requester(),
+						session.broadcast_shadows(),
+					);
+					
+					if let (Some(true), Some(requester), Some(participants_coefficients)) = session_side_result {
+						self.0.document_key_shadow_retrieved(DocumentKeyShadowRetrievalResult {
+							origin: session.origin(),
+							params: DocumentKeyShadowRetrievalParams {
+								key_id,
+								requester,
+							},
+							result: session_result.map(|result| DocumentKeyShadowRetrievalArtifacts {
+								common_point: result.common_point.expect("shadow decryption is requested; qed"),
+								threshold: session.threshold(),
+								encrypted_document_key: result.decrypted_secret,
+								participants_coefficients,
+							}),
+						});
+					}
+				}
+			}
+		}
+
+		impl ClusterSessionsListener<KeyVersionNegotiationSession<KeyVersionNegotiationSessionTransport>> for ListenerWrapper {
+			fn on_session_removed(&self, session: Arc<KeyVersionNegotiationSession<KeyVersionNegotiationSessionTransport>>) {
+				// by this time sesion must already be completed - either successfully, or not
+				assert!(session.is_finished());
+
+				// we're interested in:
+				// 1) sessions failed with fatal error
+				// 2) with decryption continue action
+				let error = match session.result() {
+					Some(Err(ref error)) if !error.is_non_fatal() => error.clone(),
+					_ => return,
+				};
+
+				let (origin, requester) = match session.take_failed_continue_action() {
+					Some(FailedContinueAction::Decrypt(origin, requester)) => (origin, requester),
+					_ => return,
+				};
+
+				let meta = session.meta();
+				let key_id = meta.id;
+				self.0.document_key_shadow_retrieved(DocumentKeyShadowRetrievalResult {
+					origin,
+					params: DocumentKeyShadowRetrievalParams {
+						key_id,
+						requester: requester.into(),
+					},
+					result: Err(error),
+				});
+			}
+		}
+
+		self.data.sessions.generation_sessions.add_listener(Arc::new(ListenerWrapper(listener.clone())));
+		self.data.sessions.decryption_sessions.add_listener(Arc::new(ListenerWrapper(listener.clone())));
+		self.data.sessions.negotiation_sessions.add_listener(Arc::new(ListenerWrapper(listener)));	
+	}
+}
+
 pub struct ServersSetChangeParams {
 	pub session_id: Option<SessionId>,
 	pub migration_id: Option<H256>,
@@ -599,7 +637,7 @@ pub struct ServersSetChangeParams {
 }
 
 pub fn new_servers_set_change_session(
-	self_key_pair: Arc<dyn SigningKeyPair>,
+	self_key_pair: Arc<dyn KeyServerKeyPair>,
 	sessions: &ClusterSessions,
 	connections: Arc<dyn ConnectionProvider>,
 	servers_set_change_creator_connector: Arc<dyn ServersSetChangeSessionCreatorConnector>,
@@ -614,7 +652,7 @@ pub fn new_servers_set_change_session(
 	let cluster = create_cluster_view(self_key_pair.clone(), connections, true)?;
 	let creation_data = AdminSessionCreationData::ServersSetChange(params.migration_id, params.new_nodes_set.clone());
 	let session = sessions.admin_sessions
-		.insert(cluster, *self_key_pair.public(), session_id, None, true, Some(creation_data))?;
+		.insert(cluster, self_key_pair.address(), session_id, None, true, Some(creation_data))?;
 	let initialization_result = session.session.as_servers_set_change().expect("servers set change session is created; qed")
 		.initialize(params.new_nodes_set, params.old_set_signature, params.new_set_signature);
 
@@ -658,15 +696,18 @@ pub mod tests {
 	use parking_lot::{Mutex, RwLock};
 	use ethereum_types::{Address, H256};
 	use parity_crypto::publickey::{Random, Generator, Public, Signature, sign};
-	use crate::blockchain::SigningKeyPair;
-	use crate::key_server_cluster::{NodeId, SessionId, Requester, Error, DummyAclStorage, DummyKeyStorage,
-		MapKeyServerSet, PlainNodeKeyPair};
+	use primitives::acl_storage::{AclStorage, InMemoryPermissiveAclStorage};
+	use primitives::key_server_set::{KeyServerSet, InMemoryKeyServerSet};
+	use primitives::key_storage::{KeyStorage, InMemoryKeyStorage};
+	use primitives::key_server_key_pair::InMemoryKeyServerKeyPair;
+	use primitives::key_server_key_pair::KeyServerKeyPair;
+	use primitives::service::ServiceTasksListenerRegistrar;
+	use crate::network::ConnectionManager;
+	use crate::network::in_memory::{InMemoryMessagesQueue, InMemoryConnectionsManager, new_in_memory_connections};
+	use crate::key_server_cluster::{NodeId, SessionId, Requester, Error};
 	use crate::key_server_cluster::message::Message;
-	use crate::key_server_cluster::cluster::{new_test_cluster, Cluster, ClusterCore, ClusterConfiguration, ClusterClient};
-	use crate::key_server_cluster::cluster_connections::ConnectionManager;
-	use crate::key_server_cluster::cluster_connections::tests::{MessagesQueue, TestConnections};
-	use crate::key_server_cluster::cluster_sessions::{WaitableSession, ClusterSession, ClusterSessions, AdminSession,
-		ClusterSessionsListener};
+	use crate::key_server_cluster::cluster::{Cluster, ClusterCore, ClusterClient, create_cluster};
+	use crate::key_server_cluster::cluster_sessions::{WaitableSession, ClusterSession, ClusterSessions, AdminSession};
 	use crate::key_server_cluster::generation_session::{SessionImpl as GenerationSession,
 		SessionState as GenerationSessionState};
 	use crate::key_server_cluster::decryption_session::{SessionImpl as DecryptionSession};
@@ -675,6 +716,41 @@ pub mod tests {
 	use crate::key_server_cluster::signing_session_schnorr::{SessionImpl as SchnorrSigningSession};
 	use crate::key_server_cluster::key_version_negotiation_session::{SessionImpl as KeyVersionNegotiationSession,
 		IsolatedSessionTransport as KeyVersionNegotiationSessionTransport};
+
+	/// Create new in-memory backed cluster.
+	pub fn new_test_cluster(
+		messages: InMemoryMessagesQueue,
+		key_server_set: Arc<dyn KeyServerSet<NetworkAddress=std::net::SocketAddr>>,
+		self_key_pair: Arc<dyn KeyServerKeyPair>,
+		key_storage: Arc<dyn KeyStorage>,
+		acl_storage: Arc<dyn AclStorage>,
+		preserve_sessions: bool,
+	) -> Result<Arc<ClusterCore<InMemoryConnectionsManager>>, Error> {
+		use crate::key_server_cluster::{
+			connection_trigger::{ConnectionTrigger, SimpleConnectionTrigger},
+		};
+
+		let nodes = key_server_set.snapshot().current_set;
+		let connections = Arc::new(new_in_memory_connections(messages, self_key_pair.address(), nodes.keys().cloned().collect()));
+		let connections_manager = connections.manager();
+		let connection_trigger = Box::new(SimpleConnectionTrigger::new(key_server_set, None));
+		let servers_set_change_creator_connector = connection_trigger.servers_set_change_creator_connector();
+		let cluster = create_cluster(
+			self_key_pair,
+			None,
+			key_storage,
+			acl_storage,
+			servers_set_change_creator_connector.clone(),
+			connections_manager.provider(),
+			move |_message_processor| Ok(connections_manager),
+		)?;
+
+		if preserve_sessions {
+			cluster.data.sessions.preserve_sessions();
+		}
+
+		Ok(cluster)
+	}
 
 	#[derive(Default)]
 	pub struct DummyClusterClient {
@@ -760,9 +836,9 @@ pub mod tests {
 			unimplemented!("test-only")
 		}
 
-		fn add_generation_listener(&self, _listener: Arc<dyn ClusterSessionsListener<GenerationSession>>) {}
-		fn add_decryption_listener(&self, _listener: Arc<dyn ClusterSessionsListener<DecryptionSession>>) {}
-		fn add_key_version_negotiation_listener(&self, _listener: Arc<dyn ClusterSessionsListener<KeyVersionNegotiationSession<KeyVersionNegotiationSessionTransport>>>) {}
+		fn session_listener_registrar(&self) -> Arc<dyn ServiceTasksListenerRegistrar> {
+			unimplemented!("test-only")
+		}
 
 		fn make_faulty_generation_sessions(&self) { unimplemented!("test-only") }
 		fn generation_session(&self, _session_id: &SessionId) -> Option<Arc<GenerationSession>> { unimplemented!("test-only") }
@@ -835,12 +911,12 @@ pub mod tests {
 
 	/// Test message loop.
 	pub struct MessageLoop {
-		messages: MessagesQueue,
+		messages: InMemoryMessagesQueue,
 		preserve_sessions: bool,
-		key_pairs_map: BTreeMap<NodeId, Arc<PlainNodeKeyPair>>,
-		acl_storages_map: BTreeMap<NodeId, Arc<DummyAclStorage>>,
-		key_storages_map: BTreeMap<NodeId, Arc<DummyKeyStorage>>,
-		clusters_map: BTreeMap<NodeId, Arc<ClusterCore<Arc<TestConnections>>>>,
+		key_pairs_map: BTreeMap<NodeId, Arc<InMemoryKeyServerKeyPair>>,
+		acl_storages_map: BTreeMap<NodeId, Arc<InMemoryPermissiveAclStorage>>,
+		key_storages_map: BTreeMap<NodeId, Arc<InMemoryKeyStorage>>,
+		clusters_map: BTreeMap<NodeId, Arc<ClusterCore<InMemoryConnectionsManager>>>,
 	}
 
 	impl ::std::fmt::Debug for MessageLoop {
@@ -861,32 +937,32 @@ pub mod tests {
 		}
 
 		/// Returns key pair of the node by its idx.
-		pub fn node_key_pair(&self, idx: usize) -> &Arc<PlainNodeKeyPair> {
+		pub fn node_key_pair(&self, idx: usize) -> &Arc<InMemoryKeyServerKeyPair> {
 			self.key_pairs_map.values().nth(idx).unwrap()
 		}
 
 		/// Get cluster reference by its index.
-		pub fn cluster(&self, idx: usize) -> &Arc<ClusterCore<Arc<TestConnections>>> {
+		pub fn cluster(&self, idx: usize) -> &Arc<ClusterCore<InMemoryConnectionsManager>> {
 			self.clusters_map.values().nth(idx).unwrap()
 		}
 
 		/// Get keys storage reference by its index.
-		pub fn key_storage(&self, idx: usize) -> &Arc<DummyKeyStorage> {
+		pub fn key_storage(&self, idx: usize) -> &Arc<InMemoryKeyStorage> {
 			self.key_storages_map.values().nth(idx).unwrap()
 		}
 
 		/// Get keys storage reference by node id.
-		pub fn key_storage_of(&self, node: &NodeId) -> &Arc<DummyKeyStorage> {
+		pub fn key_storage_of(&self, node: &NodeId) -> &Arc<InMemoryKeyStorage> {
 			&self.key_storages_map[node]
 		}
 
 		/// Replace key storage of the node by its id.
-		pub fn replace_key_storage_of(&mut self, node: &NodeId, key_storage: Arc<DummyKeyStorage>) {
+		pub fn replace_key_storage_of(&mut self, node: &NodeId, key_storage: Arc<InMemoryKeyStorage>) {
 			*self.key_storages_map.get_mut(node).unwrap() = key_storage;
 		}
 
 		/// Get ACL storage reference by its index.
-		pub fn acl_storage(&self, idx: usize) -> &Arc<DummyAclStorage> {
+		pub fn acl_storage(&self, idx: usize) -> &Arc<InMemoryPermissiveAclStorage> {
 			self.acl_storages_map.values().nth(idx).unwrap()
 		}
 
@@ -927,30 +1003,29 @@ pub mod tests {
 		}
 
 		/// Include new node to the cluster.
-		pub fn include(&mut self, node_key_pair: Arc<PlainNodeKeyPair>) -> usize {
-			let key_storage = Arc::new(DummyKeyStorage::default());
-			let acl_storage = Arc::new(DummyAclStorage::default());
-			let cluster_params = ClusterConfiguration {
-				self_key_pair: node_key_pair.clone(),
-				key_server_set: Arc::new(MapKeyServerSet::new(false, self.nodes().iter()
-					.chain(::std::iter::once(node_key_pair.public()))
+		pub fn include(&mut self, node_key_pair: Arc<InMemoryKeyServerKeyPair>) -> usize {
+			let key_storage = Arc::new(InMemoryKeyStorage::default());
+			let acl_storage = Arc::new(InMemoryPermissiveAclStorage::default());
+			let cluster = new_test_cluster(
+				self.messages.clone(),
+				Arc::new(InMemoryKeyServerSet::new(false, self.nodes().iter()
+					.chain(::std::iter::once(&node_key_pair.address()))
 					.map(|n| (*n, format!("127.0.0.1:{}", 13).parse().unwrap()))
 					.collect())),
-				key_storage: key_storage.clone(),
-				acl_storage: acl_storage.clone(),
-				admin_public: None,
-				preserve_sessions: self.preserve_sessions,
-			};
-			let cluster = new_test_cluster(self.messages.clone(), cluster_params).unwrap();
+				node_key_pair.clone(),
+				key_storage.clone(),
+				acl_storage.clone(),
+				self.preserve_sessions,
+			).unwrap();
 
 			for cluster in self.clusters_map.values(){
-				cluster.data.connections.include(node_key_pair.public().clone());
+				cluster.data.connections.include(node_key_pair.address());
 			}
-			self.acl_storages_map.insert(*node_key_pair.public(), acl_storage);
-			self.key_storages_map.insert(*node_key_pair.public(), key_storage);
-			self.clusters_map.insert(*node_key_pair.public(), cluster);
-			self.key_pairs_map.insert(*node_key_pair.public(), node_key_pair.clone());
-			self.clusters_map.keys().position(|k| k == node_key_pair.public()).unwrap()
+			self.acl_storages_map.insert(node_key_pair.address(), acl_storage);
+			self.key_storages_map.insert(node_key_pair.address(), key_storage);
+			self.clusters_map.insert(node_key_pair.address(), cluster);
+			self.key_pairs_map.insert(node_key_pair.address(), node_key_pair.clone());
+			self.clusters_map.keys().position(|k| *k == node_key_pair.address()).unwrap()
 		}
 
 		/// Is empty message queue?
@@ -972,7 +1047,8 @@ pub mod tests {
 
 		/// Take next message and process it.
 		pub fn take_and_process_message(&self) -> bool {
-			let (from, to, message) = match self.take_message() {
+			let maybe_message = self.take_message();
+			let (from, to, message) = match maybe_message {
 				Some((from, to, message)) => (from, to, message),
 				None => return false,
 			};
@@ -986,6 +1062,25 @@ pub mod tests {
 			while !predicate() {
 				if !self.take_and_process_message() {
 					panic!("message queue is empty but goal is not achieved");
+				}
+			}
+		}
+
+		/// Loops until there are no messages in the queue.
+		pub fn loop_until_future_completed<T: Send + 'static>(
+			&self,
+			fut: impl std::future::Future<Output=T> + Send + 'static,
+		) -> T {
+			use futures03::FutureExt;
+			
+			let (sender, mut receiver) = futures03::channel::oneshot::channel();
+			let pool = futures03::executor::ThreadPool::new().unwrap();
+			pool.spawn_ok(fut.map(|result| { let _ = sender.send(result); }));
+			loop {
+				if !self.take_and_process_message() {
+					if let Some(result) = receiver.try_recv().unwrap() {
+						return result;
+					}
 				}
 			}
 		}
@@ -1003,36 +1098,37 @@ pub mod tests {
 		let ports_begin = 0;
 		let messages = Arc::new(Mutex::new(VecDeque::new()));
 		let key_pairs: Vec<_> = (0..num_nodes)
-			.map(|_| Arc::new(PlainNodeKeyPair::new(Random.generate()))).collect();
-		let key_storages: Vec<_> = (0..num_nodes).map(|_| Arc::new(DummyKeyStorage::default())).collect();
-		let acl_storages: Vec<_> = (0..num_nodes).map(|_| Arc::new(DummyAclStorage::default())).collect();
-		let cluster_params: Vec<_> = (0..num_nodes).map(|i| ClusterConfiguration {
-			self_key_pair: key_pairs[i].clone(),
-			key_server_set: Arc::new(MapKeyServerSet::new(false, key_pairs.iter().enumerate()
-				.map(|(j, kp)| (*kp.public(), format!("127.0.0.1:{}", ports_begin + j as u16).parse().unwrap()))
-				.collect())),
-			key_storage: key_storages[i].clone(),
-			acl_storage: acl_storages[i].clone(),
-			admin_public: None,
-			preserve_sessions,
-		}).collect();
-		let clusters: Vec<_> = cluster_params.into_iter()
-			.map(|params| new_test_cluster(messages.clone(), params).unwrap())
+			.map(|_| Arc::new(InMemoryKeyServerKeyPair::new(Random.generate()))).collect();
+		let key_storages: Vec<_> = (0..num_nodes).map(|_| Arc::new(InMemoryKeyStorage::default())).collect();
+		let acl_storages: Vec<_> = (0..num_nodes).map(|_| Arc::new(InMemoryPermissiveAclStorage::default())).collect();
+		let clusters: Vec<_> = (0..num_nodes).into_iter()
+			.map(|i| {
+				new_test_cluster(
+					messages.clone(),
+					Arc::new(InMemoryKeyServerSet::new(false, key_pairs.iter().enumerate()
+						.map(|(j, kp)| (kp.address(), format!("127.0.0.1:{}", ports_begin + j as u16).parse().unwrap()))
+						.collect())),
+					key_pairs[i].clone(),
+					key_storages[i].clone(),
+					acl_storages[i].clone(),
+					preserve_sessions,
+				).unwrap()
+			})
 			.collect();
 
-		let clusters_map = clusters.iter().map(|c| (*c.data.config.self_key_pair.public(), c.clone())).collect();
-		let key_pairs_map = key_pairs.into_iter().map(|kp| (*kp.public(), kp)).collect();
+		let clusters_map = clusters.iter().map(|c| (c.data.self_key_pair.address(), c.clone())).collect();
+		let key_pairs_map = key_pairs.into_iter().map(|kp| (kp.address(), kp)).collect();
 		let key_storages_map = clusters.iter().zip(key_storages.into_iter())
-			.map(|(c, ks)| (*c.data.config.self_key_pair.public(), ks)).collect();
+			.map(|(c, ks)| (c.data.self_key_pair.address(), ks)).collect();
 		let acl_storages_map = clusters.iter().zip(acl_storages.into_iter())
-			.map(|(c, acls)| (*c.data.config.self_key_pair.public(), acls)).collect();
+			.map(|(c, acls)| (c.data.self_key_pair.address(), acls)).collect();
 		MessageLoop { preserve_sessions, messages, key_pairs_map, acl_storages_map, key_storages_map, clusters_map }
 	}
 
 	#[test]
 	fn cluster_wont_start_generation_session_if_not_fully_connected() {
 		let ml = make_clusters(3);
-		ml.cluster(0).data.connections.disconnect(*ml.cluster(0).data.self_key_pair.public());
+		ml.cluster(0).data.connections.disconnect(ml.cluster(0).data.self_key_pair.address());
 		match ml.cluster(0).client().new_generation_session(SessionId::from([1u8; 32]), Default::default(), Default::default(), 1) {
 			Err(Error::NodeDisconnected) => (),
 			Err(e) => panic!("unexpected error {:?}", e),
@@ -1147,14 +1243,14 @@ pub mod tests {
 			// try to start decryption session => fails in initialization
 			assert_eq!(
 				client.new_decryption_session(
-					Default::default(), Default::default(), Default::default(), Some(Default::default()), false, false
+					Default::default(), Default::default(), Requester::Signature(Default::default()), Some(Default::default()), false, false
 				).map(|_| ()),
 				Err(Error::InvalidMessage));
 
 			// try to start generation session => fails in initialization
 			assert_eq!(
 				client.new_decryption_session(
-					Default::default(), Default::default(), Default::default(), Some(Default::default()), false, false
+					Default::default(), Default::default(), Requester::Signature(Default::default()), Some(Default::default()), false, false
 				).map(|_| ()),
 				Err(Error::InvalidMessage));
 
@@ -1179,7 +1275,7 @@ pub mod tests {
 
 		// now remove share from node2
 		assert!((0..3).all(|i| ml.cluster(i).data.sessions.generation_sessions.is_empty()));
-		ml.cluster(2).data.config.key_storage.remove(&dummy_session_id).unwrap();
+		ml.cluster(2).data.key_storage.remove(&dummy_session_id).unwrap();
 
 		// and try to sign message with generated key
 		let dummy_message = [1u8; 32].into();
@@ -1203,7 +1299,7 @@ pub mod tests {
 		session2.into_wait_future().wait().unwrap();
 
 		// now remove share from node1
-		ml.cluster(1).data.config.key_storage.remove(&dummy_session_id).unwrap();
+		ml.cluster(1).data.key_storage.remove(&dummy_session_id).unwrap();
 
 		// and try to sign message with generated key
 		let signature = sign(Random.generate().secret(), &dummy_message).unwrap();
@@ -1231,7 +1327,7 @@ pub mod tests {
 
 		// now remove share from node2
 		assert!((0..3).all(|i| ml.cluster(i).data.sessions.generation_sessions.is_empty()));
-		ml.cluster(2).data.config.key_storage.remove(&dummy_session_id).unwrap();
+		ml.cluster(2).data.key_storage.remove(&dummy_session_id).unwrap();
 
 		// and try to sign message with generated key
 		let dummy_message = [1u8; 32].into();
@@ -1254,7 +1350,7 @@ pub mod tests {
 		session2.into_wait_future().wait().unwrap();
 
 		// now remove share from node1
-		ml.cluster(1).data.config.key_storage.remove(&dummy_session_id).unwrap();
+		ml.cluster(1).data.key_storage.remove(&dummy_session_id).unwrap();
 
 		// and try to sign message with generated key
 		let signature = sign(Random.generate().secret(), &dummy_message).unwrap();

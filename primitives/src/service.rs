@@ -18,7 +18,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use ethereum_types::H256;
 use parity_crypto::publickey::{Public, Signature};
 use crate::{
-	ServerKeyId, KeyServerPublic,
+	KeyServerId, ServerKeyId,
 	key_server::{ServerKeyGenerationResult, DocumentKeyShadowRetrievalResult},
 	requester::Requester,
 };
@@ -75,5 +75,5 @@ pub enum ServiceTask {
 	// === Administrative tasks ===
 
 	/// Change servers set (old_set_signature, new_set_signature, new_set).
-	ChangeServersSet(Signature, Signature, BTreeSet<KeyServerPublic>),
+	ChangeServersSet(Signature, Signature, BTreeSet<KeyServerId>),
 }

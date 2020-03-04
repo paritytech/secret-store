@@ -1,26 +1,26 @@
-// Copyright 2015-2020 Parity Technologies (UK) Ltd.
-// This file is part of Parity Secret Store.
+// Copyright 2015-2018 Parity Technologies (UK) Ltd.
+// This file is part of Parity.
 
-// Parity Secret Store is free software: you can redistribute it and/or modify
+// Parity is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
 
-// Parity Secret Store is distributed in the hope that it will be useful,
+// Parity is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
 // You should have received a copy of the GNU General Public License
-// along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
+// along with Parity.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
 use log::{info, trace, warn};
-use crate::blockchain::SigningKeyPair;
+use primitives::key_server_key_pair::KeyServerKeyPair;
+use crate::network::{ConnectionProvider, Connection};
 use crate::key_server_cluster::{Error, NodeId};
 use crate::key_server_cluster::cluster::{ServersSetChangeParams, new_servers_set_change_session};
 use crate::key_server_cluster::cluster_sessions::{AdminSession};
-use crate::key_server_cluster::cluster_connections::{ConnectionProvider, Connection};
 use crate::key_server_cluster::cluster_sessions::{ClusterSession, ClusterSessions, ClusterSessionsContainer,
 	create_cluster_view};
 use crate::key_server_cluster::cluster_sessions_creator::{ClusterSessionCreator, IntoSessionId};
@@ -51,7 +51,7 @@ pub trait MessageProcessor: Send + Sync {
 
 /// Bridge between ConnectionManager and ClusterSessions.
 pub struct SessionsMessageProcessor {
-	self_key_pair: Arc<dyn SigningKeyPair>,
+	self_key_pair: Arc<dyn KeyServerKeyPair>,
 	servers_set_change_creator_connector: Arc<dyn ServersSetChangeSessionCreatorConnector>,
 	sessions: Arc<ClusterSessions>,
 	connections: Arc<dyn ConnectionProvider>,
@@ -60,7 +60,7 @@ pub struct SessionsMessageProcessor {
 impl SessionsMessageProcessor {
 	/// Create new instance of SessionsMessageProcessor.
 	pub fn new(
-		self_key_pair: Arc<dyn SigningKeyPair>,
+		self_key_pair: Arc<dyn KeyServerKeyPair>,
 		servers_set_change_creator_connector: Arc<dyn ServersSetChangeSessionCreatorConnector>,
 		sessions: Arc<ClusterSessions>,
 		connections: Arc<dyn ConnectionProvider>,
@@ -93,15 +93,16 @@ impl SessionsMessageProcessor {
 				// this is new session => it is not yet in container
 				warn!(target: "secretstore_net",
 					"{}: {} session read error '{}' when requested for session from node {}",
-					self.self_key_pair.public(), S::type_name(), error, sender);
+					self.self_key_pair.address(), S::type_name(), error, sender);
 				if !message.is_error_message() {
 					let qed = "session_id only fails for cluster messages;
 						only session messages are passed to process_message;
 						qed";
 					let session_id = message.into_session_id().expect(qed);
 					let session_nonce = message.session_nonce().expect(qed);
+					let message = SC::make_error_message(session_id, session_nonce, error);
 
-					connection.send_message(SC::make_error_message(session_id, session_nonce, error));
+					connection.send_message(message);
 				}
 				return None;
 			},
@@ -116,7 +117,7 @@ impl SessionsMessageProcessor {
 					// if session is completed => stop
 					if session.is_finished() {
 						info!(target: "secretstore_net",
-							"{}: {} session completed", self.self_key_pair.public(), S::type_name());
+							"{}: {} session completed", self.self_key_pair.address(), S::type_name());
 						sessions.remove(&session_id);
 						return Some(session);
 					}
@@ -139,12 +140,12 @@ impl SessionsMessageProcessor {
 					warn!(
 						target: "secretstore_net",
 						"{}: {} session error '{}' when processing message {} from node {}",
-						self.self_key_pair.public(),
+						self.self_key_pair.address(),
 						S::type_name(),
 						err,
 						message,
 						sender);
-					session.on_session_error(self.self_key_pair.public(), err);
+					session.on_session_error(&self.self_key_pair.address(), err);
 					sessions.remove(&session_id);
 					return Some(session);
 				},
@@ -185,7 +186,7 @@ impl SessionsMessageProcessor {
 				let master = if is_initialization_message {
 					*sender
 				} else {
-					*self.self_key_pair.public()
+					self.self_key_pair.address()
 				};
 				let cluster = create_cluster_view(
 					self.self_key_pair.clone(),
@@ -206,13 +207,14 @@ impl SessionsMessageProcessor {
 				let msg = Message::Cluster(ClusterMessage::KeepAliveResponse(message::KeepAliveResponse {
 					session_id: None,
 				}));
-				connection.send_message(msg)
+
+				connection.send_message(msg);
 			},
 			ClusterMessage::KeepAliveResponse(msg) => if let Some(session_id) = msg.session_id {
 				self.sessions.on_session_keep_alive(connection.node_id(), session_id.into());
 			},
 			_ => warn!(target: "secretstore_net", "{}: received unexpected message {} from node {} at {}",
-				self.self_key_pair.public(), message, connection.node_id(), connection.node_address()),
+				self.self_key_pair.address(), message, connection.node_id(), connection.node_address()),
 		}
 	}
 }
@@ -224,7 +226,7 @@ impl MessageProcessor for SessionsMessageProcessor {
 
 	fn process_connection_message(&self, connection: Arc<dyn Connection>, message: Message) {
 		trace!(target: "secretstore_net", "{}: received message {} from {}",
-			self.self_key_pair.public(), message, connection.node_id());
+			self.self_key_pair.address(), message, connection.node_id());
 
 		// error is ignored as we only process errors on session level
 		match message {
@@ -280,7 +282,7 @@ impl MessageProcessor for SessionsMessageProcessor {
 						Some(ContinueAction::Decrypt(
 							session, origin, is_shadow_decryption, is_broadcast_decryption
 						)) => {
-							let initialization_error = if self.self_key_pair.public() == &master {
+							let initialization_error = if self.self_key_pair.address() == master {
 								session.initialize(
 									origin, version, is_shadow_decryption, is_broadcast_decryption)
 							} else {
@@ -294,7 +296,7 @@ impl MessageProcessor for SessionsMessageProcessor {
 							}
 						},
 						Some(ContinueAction::SchnorrSign(session, message_hash)) => {
-							let initialization_error = if self.self_key_pair.public() == &master {
+							let initialization_error = if self.self_key_pair.address() == master {
 								session.initialize(version, message_hash)
 							} else {
 								session.delegate(master, version, message_hash)
@@ -306,7 +308,7 @@ impl MessageProcessor for SessionsMessageProcessor {
 							}
 						},
 						Some(ContinueAction::EcdsaSign(session, message_hash)) => {
-							let initialization_error = if self.self_key_pair.public() == &master {
+							let initialization_error = if self.self_key_pair.address() == master {
 								session.initialize(version, message_hash)
 							} else {
 								session.delegate(master, version, message_hash)

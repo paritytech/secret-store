@@ -23,7 +23,7 @@ use super::{Error, SerializableH256, SerializablePublic, SerializableSecret,
 	SerializableSignature, SerializableMessageHash, SerializableRequester, SerializableAddress};
 
 pub type MessageSessionId = SerializableH256;
-pub type MessageNodeId = SerializablePublic;
+pub type MessageNodeId = SerializableAddress;
 
 /// All possible messages that can be sent during encryption/decryption sessions.
 #[derive(Clone, Debug)]

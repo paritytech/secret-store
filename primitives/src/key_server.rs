@@ -19,7 +19,7 @@ use std::future::Future;
 use ethereum_types::{Address, H160, H256};
 use parity_crypto::publickey::{Public, Signature};
 use crate::{
-	KeyServerId, KeyServerPublic, ServerKeyId,
+	KeyServerId, ServerKeyId,
 	error::Error,
 	requester::Requester,
 };
@@ -384,7 +384,7 @@ pub trait AdminSessionsServer {
 		origin: Option<Origin>,
 		old_set_signature: Signature,
 		new_set_signature: Signature,
-		new_servers_set: BTreeSet<KeyServerPublic>,
+		new_servers_set: BTreeSet<KeyServerId>,
 	) -> Self::ChangeServersSetFuture;
 }
 
@@ -643,7 +643,7 @@ mod accumulating_key_server {
 			origin: Option<Origin>,
 			old_set_signature: Signature,
 			new_set_signature: Signature,
-			new_servers_set: BTreeSet<KeyServerPublic>,
+			new_servers_set: BTreeSet<KeyServerId>,
 		) -> Self::ChangeServersSetFuture {
 			self.accumulated_tasks.lock().push(ServiceTask::ChangeServersSet(
 				old_set_signature,

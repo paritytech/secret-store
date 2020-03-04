@@ -18,9 +18,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::collections::BTreeMap;
 use parking_lot::RwLock;
-use parity_crypto::publickey::Public;
-use crate::key_server_cluster::{Error, NodeId, SessionId, Requester, AclStorage, KeyStorage, DocumentKeyShare, SessionMeta};
-use crate::key_server_cluster::cluster::{Cluster, ClusterConfiguration};
+use parity_crypto::publickey::Address;
+use primitives::acl_storage::AclStorage;
+use primitives::key_storage::{KeyStorage, KeyShare};
+use crate::key_server_cluster::{Error, NodeId, SessionId, Requester, SessionMeta};
+use crate::key_server_cluster::cluster::Cluster;
 use crate::key_server_cluster::connection_trigger::ServersSetChangeSessionCreatorConnector;
 use crate::key_server_cluster::cluster_sessions::{WaitableSession, ClusterSession, SessionIdWithSubSession,
 	AdminSession, AdminSessionCreationData};
@@ -93,11 +95,15 @@ pub struct SessionCreatorCore {
 
 impl SessionCreatorCore {
 	/// Create new session creator core.
-	pub fn new(config: &ClusterConfiguration) -> Self {
+	pub fn new(
+		self_node_id: NodeId,
+		key_storage: Arc<dyn KeyStorage>,
+		acl_storage: Arc<dyn AclStorage>,
+	) -> Self {
 		SessionCreatorCore {
-			self_node_id: config.self_key_pair.public().clone(),
-			acl_storage: config.acl_storage.clone(),
-			key_storage: config.key_storage.clone(),
+			self_node_id,
+			acl_storage,
+			key_storage,
 			session_counter: AtomicUsize::new(0),
 			max_nonce: RwLock::new(BTreeMap::new()),
 		}
@@ -122,7 +128,7 @@ impl SessionCreatorCore {
 	}
 
 	/// Read key share && remove disconnected nodes.
-	fn read_key_share(&self, key_id: &SessionId) -> Result<Option<DocumentKeyShare>, Error> {
+	fn read_key_share(&self, key_id: &SessionId) -> Result<Option<KeyShare>, Error> {
 		self.key_storage.get(key_id)
 	}
 }
@@ -443,7 +449,7 @@ pub struct AdminSessionCreator {
 	/// Creator core.
 	pub core: Arc<SessionCreatorCore>,
 	/// Administrator public.
-	pub admin_public: Option<Public>,
+	pub admin_address: Option<Address>,
 	/// Servers set change sessions creator connector.
 	pub servers_set_change_session_creator_connector: Arc<dyn ServersSetChangeSessionCreatorConnector>,
 }
@@ -496,12 +502,12 @@ impl ClusterSessionCreator<AdminSession> for AdminSessionCreator {
 					transport: ShareAddTransport::new(id.clone(), Some(version), nonce, cluster),
 					key_storage: self.core.key_storage.clone(),
 					nonce: nonce,
-					admin_public: Some(self.admin_public.clone().ok_or(Error::AccessDenied)?),
+					admin_address: Some(self.admin_address.clone().ok_or(Error::AccessDenied)?),
 				})?;
 				Ok(WaitableSession::new(AdminSession::ShareAdd(session), oneshot))
 			},
 			Some(AdminSessionCreationData::ServersSetChange(migration_id, new_nodes_set)) => {
-				let admin_public = self.servers_set_change_session_creator_connector.admin_public(migration_id.as_ref(), new_nodes_set)
+				let admin_address = self.servers_set_change_session_creator_connector.admin_address(migration_id.as_ref(), new_nodes_set)
 					.map_err(|_| Error::AccessDenied)?;
 
 				let (session, oneshot) = ServersSetChangeSessionImpl::new(ServersSetChangeSessionParams {
@@ -516,7 +522,7 @@ impl ClusterSessionCreator<AdminSession> for AdminSessionCreator {
 					key_storage: self.core.key_storage.clone(),
 					nonce: nonce,
 					all_nodes_set: cluster.nodes(),
-					admin_public: admin_public,
+					admin_address: admin_address,
 					migration_id: migration_id,
 				})?;
 				Ok(WaitableSession::new(AdminSession::ServersSetChange(session), oneshot))

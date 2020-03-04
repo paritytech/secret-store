@@ -21,7 +21,8 @@ use log::warn;
 use parity_crypto::publickey::Secret;
 use futures::Oneshot;
 use parking_lot::Mutex;
-use crate::key_server_cluster::{Error, SessionId, NodeId, DocumentKeyShare};
+use primitives::key_storage::KeyShare;
+use crate::key_server_cluster::{Error, SessionId, NodeId};
 use crate::key_server_cluster::cluster::Cluster;
 use crate::key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
 use crate::key_server_cluster::decryption_session::SessionImpl as DecryptionSession;
@@ -82,7 +83,7 @@ struct SessionCore<T: SessionTransport> {
 	/// Sub-session id.
 	pub sub_session: Secret,
 	/// Key share.
-	pub key_share: Option<DocumentKeyShare>,
+	pub key_share: Option<KeyShare>,
 	/// Session result computer.
 	pub result_computer: Arc<dyn SessionResultComputer>,
 	/// Session transport.
@@ -100,7 +101,7 @@ struct SessionData {
 	/// Initialization confirmations.
 	pub confirmations: Option<BTreeSet<NodeId>>,
 	/// Common key data that nodes have agreed upon.
-	pub key_share: Option<DocumentKeyShare>,
+	pub key_share: Option<KeyShare>,
 	/// { Version => Nodes }
 	pub versions: Option<BTreeMap<H256, BTreeSet<NodeId>>>,
 	/// Session result.
@@ -118,7 +119,7 @@ pub struct SessionParams<T: SessionTransport> {
 	/// Sub-session id.
 	pub sub_session: Secret,
 	/// Key share.
-	pub key_share: Option<DocumentKeyShare>,
+	pub key_share: Option<KeyShare>,
 	/// Session result computer.
 	pub result_computer: Arc<dyn SessionResultComputer>,
 	/// Session transport to communicate to other cluster nodes.
@@ -183,7 +184,7 @@ impl<T> SessionImpl<T> where T: SessionTransport {
 			data: Mutex::new(SessionData {
 				state: SessionState::WaitingForInitialization,
 				confirmations: None,
-				key_share: params.key_share.map(|key_share| DocumentKeyShare {
+				key_share: params.key_share.map(|key_share| KeyShare {
 					threshold: key_share.threshold,
 					author: key_share.author,
 					public: key_share.public,
@@ -230,7 +231,7 @@ impl<T> SessionImpl<T> where T: SessionTransport {
 	}
 
 	/// Retrieve common key data (author, threshold, public), if available.
-	pub fn common_key_data(&self) -> Result<DocumentKeyShare, Error> {
+	pub fn common_key_data(&self) -> Result<KeyShare, Error> {
 		self.data.lock().key_share.clone()
 			.ok_or(Error::InvalidStateForRequest)
 	}
@@ -369,7 +370,7 @@ impl<T> SessionImpl<T> where T: SessionTransport {
 		{
 			match message.key_common.as_ref() {
 				Some(key_common) if data.key_share.is_none() => {
-					data.key_share = Some(DocumentKeyShare {
+					data.key_share = Some(KeyShare {
 						threshold: key_common.threshold,
 						author: key_common.author.clone().into(),
 						public: key_common.public.clone().into(),
@@ -538,7 +539,7 @@ impl SessionTransport for IsolatedSessionTransport {
 }
 
 impl FastestResultComputer {
-	pub fn new(self_node_id: NodeId, key_share: Option<&DocumentKeyShare>, configured_nodes_count: usize, connected_nodes_count: usize) -> Self {
+	pub fn new(self_node_id: NodeId, key_share: Option<&KeyShare>, configured_nodes_count: usize, connected_nodes_count: usize) -> Self {
 		let threshold = key_share.map(|ks| ks.threshold);
 		FastestResultComputer {
 			self_node_id,
@@ -619,8 +620,8 @@ mod tests {
 	use std::collections::{VecDeque, BTreeMap, BTreeSet};
 	use ethereum_types::{H512, H160, Address};
 	use parity_crypto::publickey::public_to_address;
-	use crate::key_server_cluster::{NodeId, SessionId, Error, KeyStorage, DummyKeyStorage,
-		DocumentKeyShare, DocumentKeyShareVersion};
+	use primitives::key_storage::{KeyStorage, InMemoryKeyStorage, KeyShare, KeyShareVersion};
+	use crate::key_server_cluster::{NodeId, SessionId, Error};
 	use crate::key_server_cluster::math;
 	use crate::key_server_cluster::cluster::Cluster;
 	use crate::key_server_cluster::cluster::tests::DummyCluster;
@@ -652,7 +653,7 @@ mod tests {
 
 	struct Node {
 		pub cluster: Arc<DummyCluster>,
-		pub key_storage: Arc<DummyKeyStorage>,
+		pub key_storage: Arc<InMemoryKeyStorage>,
 		pub session: SessionImpl<DummyTransport>,
 	}
 
@@ -663,16 +664,16 @@ mod tests {
 	}
 
 	impl MessageLoop {
-		pub fn prepare_nodes(nodes_num: usize) -> BTreeMap<NodeId, Arc<DummyKeyStorage>> {
-			(0..nodes_num).map(|_| (math::generate_random_point().unwrap(),
-				Arc::new(DummyKeyStorage::default()))).collect()
+		pub fn prepare_nodes(nodes_num: usize) -> BTreeMap<NodeId, Arc<InMemoryKeyStorage>> {
+			(0..nodes_num).map(|_| (math::generate_random_address().unwrap(),
+				Arc::new(InMemoryKeyStorage::default()))).collect()
 		}
 
 		pub fn empty(nodes_num: usize) -> Self {
 			Self::new(Self::prepare_nodes(nodes_num))
 		}
 
-		pub fn new(nodes: BTreeMap<NodeId, Arc<DummyKeyStorage>>) -> Self {
+		pub fn new(nodes: BTreeMap<NodeId, Arc<InMemoryKeyStorage>>) -> Self {
 			let master_node_id = nodes.keys().cloned().nth(0).unwrap();
 			let sub_sesion = math::generate_random_scalar().unwrap();
 			let all_nodes_ids: BTreeSet<_> = nodes.keys().cloned().collect();
@@ -899,13 +900,13 @@ mod tests {
 	fn fast_negotiation_does_not_completes_instantly_when_enough_share_owners_are_connected() {
 		let nodes = MessageLoop::prepare_nodes(2);
 		let version_id = (*math::generate_random_scalar().unwrap()).clone();
-		nodes.values().nth(0).unwrap().insert(Default::default(), DocumentKeyShare {
+		nodes.values().nth(0).unwrap().insert(Default::default(), KeyShare {
 			author: H160::from_low_u64_be(2),
 			threshold: 1,
 			public: H512::from_low_u64_be(3),
 			common_point: None,
 			encrypted_point: None,
-			versions: vec![DocumentKeyShareVersion {
+			versions: vec![KeyShareVersion {
 				hash: version_id,
 				id_numbers: vec![(nodes.keys().cloned().nth(0).unwrap(), math::generate_random_scalar().unwrap())].into_iter().collect(),
 				secret_share: math::generate_random_scalar().unwrap(),
@@ -917,7 +918,7 @@ mod tests {
 		assert!(ml.session(0).data.lock().state != SessionState::Finished);
 
 		// check that upon completion, commmon key data is known
-		assert_eq!(ml.session(0).common_key_data(), Ok(DocumentKeyShare {
+		assert_eq!(ml.session(0).common_key_data(), Ok(KeyShare {
 			author: H160::from_low_u64_be(2),
 			threshold: 1,
 			public: H512::from_low_u64_be(3),

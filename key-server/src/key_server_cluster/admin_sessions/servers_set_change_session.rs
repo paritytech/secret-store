@@ -21,8 +21,9 @@ use log::warn;
 use futures::Oneshot;
 use parking_lot::Mutex;
 use ethereum_types::H256;
-use parity_crypto::publickey::{Public, Signature};
-use crate::key_server_cluster::{Error, NodeId, SessionId, KeyStorage};
+use parity_crypto::publickey::{Address, Signature};
+use primitives::key_storage::KeyStorage;
+use crate::key_server_cluster::{Error, NodeId, SessionId};
 use crate::key_server_cluster::math;
 use crate::key_server_cluster::cluster::Cluster;
 use crate::key_server_cluster::cluster_sessions::{ClusterSession, CompletionSignal};
@@ -92,7 +93,7 @@ struct SessionCore {
 	/// All known nodes.
 	pub all_nodes_set: BTreeSet<NodeId>,
 	/// Administrator public key.
-	pub admin_public: Public,
+	pub admin_address: Address,
 	/// Migration id (if this session is a part of auto-migration process).
 	pub migration_id: Option<H256>,
 	/// Session completion signal.
@@ -145,7 +146,7 @@ pub struct SessionParams {
 	/// All known nodes.
 	pub all_nodes_set: BTreeSet<NodeId>,
 	/// Administrator public key.
-	pub admin_public: Public,
+	pub admin_address: Address,
 	/// Migration id (if this session is a part of auto-migration process).
 	pub migration_id: Option<H256>,
 }
@@ -193,7 +194,7 @@ impl SessionImpl {
 				key_storage: params.key_storage,
 				nonce: params.nonce,
 				all_nodes_set: params.all_nodes_set,
-				admin_public: params.admin_public,
+				admin_address: params.admin_address,
 				migration_id: params.migration_id,
 				completed,
 			},
@@ -237,7 +238,7 @@ impl SessionImpl {
 
 		let mut consensus_session = ConsensusSession::new(ConsensusSessionParams {
 			meta: self.core.meta.clone().into_consensus_meta(self.core.all_nodes_set.len())?,
-			consensus_executor: ServersSetChangeAccessJob::new_on_master(self.core.admin_public.clone(),
+			consensus_executor: ServersSetChangeAccessJob::new_on_master(self.core.admin_address.clone(),
 				self.core.all_nodes_set.clone(),
 				new_nodes_set.clone(),
 				all_set_signature,
@@ -315,7 +316,7 @@ impl SessionImpl {
 					&ConsensusMessageWithServersSet::InitializeConsensusSession(_) => {
 						data.consensus_session = Some(ConsensusSession::new(ConsensusSessionParams {
 							meta: self.core.meta.clone().into_consensus_meta(self.core.all_nodes_set.len())?,
-							consensus_executor: ServersSetChangeAccessJob::new_on_slave(self.core.admin_public.clone()),
+							consensus_executor: ServersSetChangeAccessJob::new_on_slave(self.core.admin_address.clone()),
 							consensus_transport: ServersSetChangeConsensusTransport {
 								id: self.core.meta.id.clone(),
 								nonce: self.core.nonce,
@@ -1051,9 +1052,11 @@ pub mod tests {
 	use std::sync::Arc;
 	use std::collections::{VecDeque, BTreeMap, BTreeSet};
 	use ethereum_types::H256;
-	use parity_crypto::publickey::{Random, Generator, Public, Signature, KeyPair, sign};
-	use crate::blockchain::SigningKeyPair;
-	use crate::key_server_cluster::{NodeId, SessionId, Error, KeyStorage, PlainNodeKeyPair};
+	use parity_crypto::publickey::{Address, Random, Generator, Signature, KeyPair, public_to_address, sign};
+	use primitives::key_storage::KeyStorage;
+	use primitives::key_server_key_pair::InMemoryKeyServerKeyPair;
+	use primitives::key_server_key_pair::KeyServerKeyPair;
+	use crate::key_server_cluster::{NodeId, SessionId, Error};
 	use crate::key_server_cluster::cluster_sessions::ClusterSession;
 	use crate::key_server_cluster::cluster::tests::MessageLoop as ClusterMessageLoop;
 	use crate::key_server_cluster::generation_session::tests::{MessageLoop as GenerationMessageLoop};
@@ -1068,7 +1071,7 @@ pub mod tests {
 
 		fn create(
 			meta: ShareChangeSessionMeta,
-			admin_public: Public,
+			admin_address: Address,
 			all_nodes_set: BTreeSet<NodeId>,
 			ml: &ClusterMessageLoop,
 			idx: usize
@@ -1101,19 +1104,19 @@ pub mod tests {
 
 		fn create(
 			mut meta: ShareChangeSessionMeta,
-			admin_public: Public,
+			admin_address: Address,
 			all_nodes_set: BTreeSet<NodeId>,
 			ml: &ClusterMessageLoop,
 			idx: usize
 		) -> SessionImpl {
-			meta.self_node_id = *ml.node_key_pair(idx).public();
+			meta.self_node_id = ml.node_key_pair(idx).address();
 			SessionImpl::new(SessionParams {
 				meta: meta,
 				all_nodes_set: all_nodes_set,
 				cluster: ml.cluster(idx).view().unwrap(),
 				key_storage: ml.key_storage(idx).clone(),
 				nonce: 1,
-				admin_public: admin_public,
+				admin_address: admin_address,
 				migration_id: None,
 			}).unwrap().0
 		}
@@ -1173,7 +1176,7 @@ pub mod tests {
 
 			// generate admin key pair
 			let admin_key_pair = Random.generate();
-			let admin_public = admin_key_pair.public().clone();
+			let admin_address = public_to_address(admin_key_pair.public());
 
 			// all active nodes set
 			let mut all_nodes_set: BTreeSet<_> = ml.nodes().into_iter()
@@ -1181,13 +1184,13 @@ pub mod tests {
 				.collect();
 			// new nodes set includes all old nodes, except nodes being removed + all nodes being added
 			let new_nodes_set: BTreeSet<NodeId> = all_nodes_set.iter().cloned()
-				.chain(add.iter().map(|kp| *kp.public()))
+				.chain(add.iter().map(|kp| kp.address()))
 				.filter(|n| !removed_nodes_ids.contains(n))
 				.collect();
 			let mut old_set_to_sign = all_nodes_set.clone();
-			all_nodes_set.extend(add.iter().map(|kp| *kp.public()));
+			all_nodes_set.extend(add.iter().map(|kp| kp.address()));
 			if C::SIGN_NEW_NODES {
-				old_set_to_sign.extend(add.iter().map(|kp| *kp.public()));
+				old_set_to_sign.extend(add.iter().map(|kp| kp.address()));
 			}
 			for isolated_node_id in &isolated_nodes_ids {
 				all_nodes_set.remove(isolated_node_id);
@@ -1203,7 +1206,7 @@ pub mod tests {
 
 			// include new nodes in the cluster
 			for node_key_pair in &add {
-				ml.include(Arc::new(PlainNodeKeyPair::new(node_key_pair.clone())));
+				ml.include(Arc::new(InMemoryKeyServerKeyPair::new(node_key_pair.clone())));
 			}
 			// isolate nodes from the cluster
 			for isolated_node_id in &isolated_nodes_ids {
@@ -1213,7 +1216,7 @@ pub mod tests {
 
 			// prepare set of nodes
 			let sessions: BTreeMap<_, _> = (0..ml.nodes().len())
-				.map(|idx| (ml.node(idx), C::create(meta.clone(), admin_public, all_nodes_set.clone(), &ml, idx)))
+				.map(|idx| (ml.node(idx), C::create(meta.clone(), admin_address, all_nodes_set.clone(), &ml, idx)))
 				.collect();
 
 			let all_set_signature = sign(admin_key_pair.secret(), &ordered_nodes_hash(&old_set_to_sign)).unwrap();
@@ -1330,7 +1333,7 @@ pub mod tests {
 		// 2) key share is pushed to new node
 		// 3) delegated session is returned back to added node
 		let add = vec![Random.generate()];
-		let master = add[0].public().clone();
+		let master = add[0].address();
 		let ml = MessageLoop::with_gml::<Adapter>(gml, master, Some(add), None, None).run_at(master);
 
 		// try to recover secret for every possible combination of nodes && check that secret is the same
@@ -1414,11 +1417,11 @@ pub mod tests {
 		// and now let's add new node (make sure the session is completed, even though key is still irrecoverable)
 		// isolated here are not actually isolated, but removed on the previous step
 		let add = vec![Random.generate()];
-		let master = add[0].public().clone();
+		let master = add[0].address();
 		let ml = ml.and_then::<Adapter>(master, Some(add.clone()), None, Some(remove)).run_at(master);
 
 		// check that all added nodes do not own key share (there's not enough nodes to run share add session)
-		assert!(ml.sessions.keys().filter(|k| add.iter().any(|n| n.public() == *k))
+		assert!(ml.sessions.keys().filter(|k| add.iter().any(|n| n.address() == **k))
 			.all(|k| ml.ml.key_storage_of(k).get(&SessionId::from([1u8; 32])).unwrap().is_none()));
 	}
 
@@ -1446,7 +1449,7 @@ pub mod tests {
 			.run_at(master);
 
 		// now let's say new node has lost its db and we're trying to join it again
-		ml.ml.key_storage_of(add[0].public()).clear().unwrap();
+		ml.ml.key_storage_of(&add[0].address()).clear().unwrap();
 
 		// this time old nodes have version, where new node is mentioned, but it doesn't report it when negotiating
 		let ml = ml.and_then::<Adapter>(master, Some(add), None, None).run_at(master);

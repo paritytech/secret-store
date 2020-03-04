@@ -21,13 +21,13 @@ use std::time::Duration;
 use std::net::SocketAddr;
 use futures::{try_ready, Future, Poll, Async};
 use tokio::net::{TcpStream, tcp::ConnectFuture};
-use crate::blockchain::SigningKeyPair;
+use primitives::key_server_key_pair::KeyServerKeyPair;
 use crate::key_server_cluster::{Error, NodeId};
 use crate::key_server_cluster::io::{handshake, Handshake, Deadline, deadline};
-use crate::key_server_cluster::net::Connection;
+use crate::network::tcp::connection::Connection;
 
 /// Create future for connecting to other node.
-pub fn connect(address: &SocketAddr, self_key_pair: Arc<dyn SigningKeyPair>, trusted_nodes: BTreeSet<NodeId>) -> Deadline<Connect> {
+pub fn connect(address: &SocketAddr, self_key_pair: Arc<dyn KeyServerKeyPair>, trusted_nodes: BTreeSet<NodeId>) -> Deadline<Connect> {
 	let connect = Connect {
 		state: ConnectState::TcpConnect(TcpStream::connect(address)),
 		address: address.clone(),
@@ -48,7 +48,7 @@ enum ConnectState {
 pub struct Connect {
 	state: ConnectState,
 	address: SocketAddr,
-	self_key_pair: Arc<dyn SigningKeyPair>,
+	self_key_pair: Arc<dyn KeyServerKeyPair>,
 	trusted_nodes: BTreeSet<NodeId>,
 }
 

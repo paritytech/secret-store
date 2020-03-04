@@ -14,20 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::BTreeMap;
-
-use crate::blockchain::ContractAddress;
+use parity_crypto::publickey::Address;
 
 /// Node id.
-pub type NodeId = parity_crypto::publickey::Public;
+pub type NodeId = primitives::KeyServerId;
 /// Server key id. When key is used to encrypt document, it could be document contents hash.
 pub type ServerKeyId = ethereum_types::H256;
 /// Encrypted document key type.
 pub type EncryptedDocumentKey = parity_bytes::Bytes;
-/// Message hash.
-pub type MessageHash = ethereum_types::H256;
-/// Message signature.
-pub type EncryptedMessageSignature = parity_bytes::Bytes;
 /// Request signature type.
 pub type RequestSignature = parity_crypto::publickey::Signature;
 /// Public key type.
@@ -42,43 +36,11 @@ pub struct NodeAddress {
 	pub port: u16,
 }
 
-/// Secret store configuration
-#[derive(Debug)]
-pub struct ServiceConfiguration {
-	/// HTTP listener address. If None, HTTP API is disabled.
-	pub listener_address: Option<NodeAddress>,
-	/// Service contract address.
-	pub service_contract_address: Option<ContractAddress>,
-	/// Server key generation service contract address.
-	pub service_contract_srv_gen_address: Option<ContractAddress>,
-	/// Server key retrieval service contract address.
-	pub service_contract_srv_retr_address: Option<ContractAddress>,
-	/// Document key store service contract address.
-	pub service_contract_doc_store_address: Option<ContractAddress>,
-	/// Document key shadow retrieval service contract address.
-	pub service_contract_doc_sretr_address: Option<ContractAddress>,
-	/// ACL check contract address. If None, everyone has access to all keys. Useful for tests only.
-	pub acl_check_contract_address: Option<ContractAddress>,
-	/// Cluster configuration.
-	pub cluster_config: ClusterConfiguration,
-	// Allowed CORS domains
-	pub cors: Option<Vec<String>>,
-}
-
 /// Key server cluster configuration
 #[derive(Debug)]
 pub struct ClusterConfiguration {
-	/// This node address.
-	pub listener_address: NodeAddress,
-	/// All cluster nodes addresses.
-	pub nodes: BTreeMap<parity_crypto::publickey::Public, NodeAddress>,
-	/// Key Server Set contract address. If None, servers from 'nodes' map are used.
-	pub key_server_set_contract_address: Option<ContractAddress>,
-	/// Allow outbound connections to 'higher' nodes.
-	/// This is useful for tests, but slower a bit for production.
-	pub allow_connecting_to_higher_nodes: bool,
 	/// Administrator public key.
-	pub admin_public: Option<Public>,
+	pub admin_address: Option<Address>,
 	/// Should key servers set change session should be started when servers set changes.
 	/// This will only work when servers set is configured using KeyServerSet contract.
 	pub auto_migrate_enabled: bool,
@@ -95,53 +57,4 @@ pub struct EncryptedDocumentKeyShadow {
 	pub decrypt_shadows: Option<Vec<Vec<u8>>>,
 }
 
-/// Requester identification data.
-#[derive(Debug, Clone)]
-pub enum Requester {
-	/// Requested with server key id signature.
-	Signature(parity_crypto::publickey::Signature),
-	/// Requested with public key.
-	Public(parity_crypto::publickey::Public),
-	/// Requested with verified address.
-	Address(ethereum_types::Address),
-}
-
-impl Default for Requester {
-	fn default() -> Self {
-		Requester::Signature(Default::default())
-	}
-}
-
-impl Requester {
-	pub fn public(&self, server_key_id: &ServerKeyId) -> Result<Public, String> {
-		match *self {
-			Requester::Signature(ref signature) => parity_crypto::publickey::recover(signature, server_key_id)
-				.map_err(|e| format!("bad signature: {}", e)),
-			Requester::Public(ref public) => Ok(public.clone()),
-			Requester::Address(_) => Err("cannot recover public from address".into()),
-		}
-	}
-
-	pub fn address(&self, server_key_id: &ServerKeyId) -> Result<parity_crypto::publickey::Address, String> {
-		self.public(server_key_id)
-			.map(|p| parity_crypto::publickey::public_to_address(&p))
-	}
-}
-
-impl From<parity_crypto::publickey::Signature> for Requester {
-	fn from(signature: parity_crypto::publickey::Signature) -> Requester {
-		Requester::Signature(signature)
-	}
-}
-
-impl From<ethereum_types::Public> for Requester {
-	fn from(public: ethereum_types::Public) -> Requester {
-		Requester::Public(public)
-	}
-}
-
-impl From<ethereum_types::Address> for Requester {
-	fn from(address: ethereum_types::Address) -> Requester {
-		Requester::Address(address)
-	}
-}
+pub use primitives::requester::Requester;

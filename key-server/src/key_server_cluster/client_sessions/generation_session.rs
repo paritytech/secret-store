@@ -22,7 +22,8 @@ use parking_lot::Mutex;
 use ethereum_types::Address;
 use log::warn;
 use parity_crypto::publickey::{Public, Secret};
-use crate::key_server_cluster::{Error, NodeId, SessionId, KeyStorage, DocumentKeyShare, DocumentKeyShareVersion};
+use primitives::key_storage::{KeyStorage, KeyShare, KeyShareVersion};
+use crate::key_server_cluster::{Error, NodeId, SessionId};
 use crate::key_server_cluster::math;
 use crate::key_server_cluster::cluster::Cluster;
 use crate::key_server_cluster::cluster_sessions::{ClusterSession, CompletionSignal};
@@ -59,7 +60,7 @@ pub struct SessionParams {
 	/// SessionImpl identifier.
 	pub id: SessionId,
 	/// Id of node, on which this session is running.
-	pub self_node_id: Public,
+	pub self_node_id: NodeId,
 	/// Key storage.
 	pub key_storage: Option<Arc<dyn KeyStorage>>,
 	/// Cluster
@@ -107,7 +108,7 @@ struct SessionData {
 
 	/// === Values, filled when DKG session is completed successfully ===
 	/// Key share.
-	key_share: Option<Result<DocumentKeyShare, Error>>,
+	key_share: Option<Result<KeyShare, Error>>,
 	/// Jointly generated public key, which can be used to encrypt secret. Public.
 	joint_public_and_secret: Option<Result<(Public, Secret, Secret), Error>>,
 }
@@ -585,13 +586,13 @@ impl SessionImpl {
 			};
 
 			// save encrypted data to key storage
-			let encrypted_data = DocumentKeyShare {
+			let encrypted_data = KeyShare {
 				author: data.author.as_ref().expect("author is filled in initialization phase; KG phase follows initialization phase; qed").clone(),
 				threshold: data.threshold.expect("threshold is filled in initialization phase; KG phase follows initialization phase; qed"),
 				public: joint_public,
 				common_point: None,
 				encrypted_point: None,
-				versions: vec![DocumentKeyShareVersion::new(
+				versions: vec![KeyShareVersion::new(
 					data.nodes.iter().map(|(node_id, node_data)| (node_id.clone(), node_data.id_number.clone())).collect(),
 					data.secret_share.as_ref().expect("secret_share is filled in KG phase; we are at the end of KG phase; qed").clone(),
 				)],
@@ -775,13 +776,13 @@ impl SessionImpl {
 
 		// prepare key data
 		let secret_share = data.secret_share.as_ref().expect("secret_share is filled in KG phase; we are at the end of KG phase; qed").clone();
-		let encrypted_data = DocumentKeyShare {
+		let encrypted_data = KeyShare {
 			author: data.author.as_ref().expect("author is filled in initialization phase; KG phase follows initialization phase; qed").clone(),
 			threshold: data.threshold.expect("threshold is filled in initialization phase; KG phase follows initialization phase; qed"),
 			public: joint_public.clone(),
 			common_point: None,
 			encrypted_point: None,
-			versions: vec![DocumentKeyShareVersion::new(
+			versions: vec![KeyShareVersion::new(
 				data.nodes.iter().map(|(node_id, node_data)| (node_id.clone(), node_data.id_number.clone())).collect(),
 				secret_share.clone(),
 			)],
@@ -953,7 +954,8 @@ pub mod tests {
 	use std::sync::Arc;
 	use ethereum_types::H256;
 	use parity_crypto::publickey::{Random, Generator, KeyPair, Secret};
-	use crate::key_server_cluster::{NodeId, Error, KeyStorage, SessionId, ServerKeyId};
+	use primitives::key_storage::KeyStorage;
+	use crate::key_server_cluster::{NodeId, Error, SessionId, ServerKeyId};
 	use crate::key_server_cluster::message::{self, Message, GenerationMessage, KeysDissemination,
 		PublicKeyShare, ConfirmInitialization};
 	use crate::key_server_cluster::cluster::tests::{MessageLoop as ClusterMessageLoop, make_clusters_and_preserve_sessions};

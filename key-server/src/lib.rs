@@ -18,123 +18,120 @@ mod key_server_cluster;
 mod types;
 
 mod traits;
-mod acl_storage;
 mod key_server;
-mod key_storage;
 mod serialization;
-mod key_server_set;
-mod node_key_pair;
-mod listener;
-mod blockchain;
-mod migration;
+pub mod network;
 
 use std::sync::Arc;
-use kvdb::KeyValueDB;
-use kvdb_rocksdb::{Database, DatabaseConfig};
-use parity_runtime::Executor;
+use crate::network::tcp::{NetConnectionsManager};
 
+pub use crate::network::{ConnectionProvider, ConnectionManager, Connection};
 pub use crate::types::{ServerKeyId, EncryptedDocumentKey, RequestSignature, Public,
-	Error, NodeAddress, ServiceConfiguration, ClusterConfiguration};
+	Error, NodeAddress, ClusterConfiguration};
+pub use crate::key_server::KeyServerImpl;
 pub use crate::traits::KeyServer;
-pub use crate::blockchain::{SecretStoreChain, SigningKeyPair, ContractAddress, BlockId, BlockNumber, NewBlocksNotify, Filter};
-pub use self::node_key_pair::PlainNodeKeyPair;
+pub use key_server_cluster::message::Message;
+use primitives::{
+	acl_storage::AclStorage,
+	executor::TokioHandle,
+	key_server_set::KeyServerSet,
+	key_storage::KeyStorage,
+	key_server_key_pair::KeyServerKeyPair,
+};
 
-/// Open a secret store DB using the given secret store data path. The DB path is one level beneath the data path.
-pub fn open_secretstore_db(data_path: &str) -> Result<Arc<dyn KeyValueDB>, String> {
-	use std::path::PathBuf;
-
-	migration::upgrade_db(data_path).map_err(|e| e.to_string())?;
-
-	let mut db_path = PathBuf::from(data_path);
-	db_path.push("db");
-	let db_path = db_path.to_str().ok_or_else(|| "Invalid secretstore path".to_string())?;
-
-	let config = DatabaseConfig::with_columns(1);
-	Ok(Arc::new(Database::open(&config, &db_path).map_err(|e| format!("Error opening database: {:?}", e))?))
+/// 
+pub struct Builder {
+	self_key_pair: Option<Arc<dyn KeyServerKeyPair>>,
+	acl_storage: Option<Arc<dyn AclStorage>>,
+	key_storage: Option<Arc<dyn KeyStorage>>,
+	config: Option<ClusterConfiguration>,
 }
 
-/// Start new key server instance
-pub fn start(trusted_client: Arc<dyn SecretStoreChain>, self_key_pair: Arc<dyn SigningKeyPair>, mut config: ServiceConfiguration,
-	db: Arc<dyn KeyValueDB>, executor: Executor) -> Result<Box<dyn KeyServer>, Error>
-{
-	let acl_storage: Arc<dyn acl_storage::AclStorage> = match config.acl_check_contract_address.take() {
-		Some(acl_check_contract_address) => acl_storage::OnChainAclStorage::new(trusted_client.clone(), acl_check_contract_address)?,
-		None => Arc::new(acl_storage::DummyAclStorage::default()),
-	};
+impl Builder {
+	pub fn new() -> Self {
+		Builder {
+			self_key_pair: None,
+			acl_storage: None,
+			key_storage: None,
+			config: None,
+		}
+	}
 
-	let key_server_set = key_server_set::OnChainKeyServerSet::new(trusted_client.clone(), config.cluster_config.key_server_set_contract_address.take(),
-		self_key_pair.clone(), config.cluster_config.auto_migrate_enabled, config.cluster_config.nodes.clone())?;
-	let key_storage = Arc::new(key_storage::PersistentKeyStorage::new(db)?);
-	let key_server = Arc::new(key_server::KeyServerImpl::new(&config.cluster_config, key_server_set.clone(), self_key_pair.clone(),
-		acl_storage.clone(), key_storage.clone(), executor.clone())?);
-	let cluster = key_server.cluster();
-	let key_server: Arc<dyn KeyServer> = key_server;
+	pub fn with_self_key_pair(mut self, self_key_pair: Arc<dyn KeyServerKeyPair>) -> Self {
+		self.self_key_pair = Some(self_key_pair);
+		self
+	}
+	
+	pub fn with_acl_storage(mut self, acl_storage: Arc<dyn AclStorage>) -> Self {
+		self.acl_storage = Some(acl_storage);
+		self
+	}
 
-	// prepare HTTP listener
-	let http_listener = match config.listener_address {
-		Some(listener_address) => Some(listener::http_listener::KeyServerHttpListener::start(listener_address, config.cors, Arc::downgrade(&key_server), executor)?),
-		None => None,
-	};
+	pub fn with_key_storage(mut self, key_storage: Arc<dyn KeyStorage>) -> Self {
+		self.key_storage = Some(key_storage);
+		self
+	}
 
-	// prepare service contract listeners
-	let create_service_contract = |address, name, api_mask|
-		Arc::new(listener::service_contract::OnChainServiceContract::new(
-			api_mask,
-			trusted_client.clone(),
-			name,
-			address,
-			self_key_pair.clone()));
+	pub fn with_config(mut self, config: ClusterConfiguration) -> Self {
+		self.config = Some(config);
+		self
+	}
 
-	let mut contracts: Vec<Arc<dyn listener::service_contract::ServiceContract>> = Vec::new();
-	config.service_contract_address.map(|address|
-		create_service_contract(address,
-			listener::service_contract::SERVICE_CONTRACT_REGISTRY_NAME.to_owned(),
-			listener::ApiMask::all()))
-		.map(|l| contracts.push(l));
-	config.service_contract_srv_gen_address.map(|address|
-		create_service_contract(address,
-			listener::service_contract::SRV_KEY_GEN_SERVICE_CONTRACT_REGISTRY_NAME.to_owned(),
-			listener::ApiMask { server_key_generation_requests: true, ..Default::default() }))
-		.map(|l| contracts.push(l));
-	config.service_contract_srv_retr_address.map(|address|
-		create_service_contract(address,
-			listener::service_contract::SRV_KEY_RETR_SERVICE_CONTRACT_REGISTRY_NAME.to_owned(),
-			listener::ApiMask { server_key_retrieval_requests: true, ..Default::default() }))
-		.map(|l| contracts.push(l));
-	config.service_contract_doc_store_address.map(|address|
-		create_service_contract(address,
-			listener::service_contract::DOC_KEY_STORE_SERVICE_CONTRACT_REGISTRY_NAME.to_owned(),
-			listener::ApiMask { document_key_store_requests: true, ..Default::default() }))
-		.map(|l| contracts.push(l));
-	config.service_contract_doc_sretr_address.map(|address|
-		create_service_contract(address,
-			listener::service_contract::DOC_KEY_SRETR_SERVICE_CONTRACT_REGISTRY_NAME.to_owned(),
-			listener::ApiMask { document_key_shadow_retrieval_requests: true, ..Default::default() }))
-		.map(|l| contracts.push(l));
+	pub fn build_for_tcp(
+		self,
+		executor: TokioHandle,
+		listen_address: crate::network::tcp::NodeAddress,
+		key_server_set: Arc<dyn KeyServerSet<NetworkAddress=std::net::SocketAddr>>,
+	) -> Result<Arc<KeyServerImpl>, Error> {
+		let self_key_pair = self.self_key_pair.ok_or_else(|| Error::Internal("Invalid initialization".into()))?;
+		let acl_storage = self.acl_storage.ok_or_else(|| Error::Internal("Invalid initialization".into()))?;
+		let key_storage = self.key_storage.ok_or_else(|| Error::Internal("Invalid initialization".into()))?;
+		let config = self.config.ok_or_else(|| Error::Internal("Invalid initialization".into()))?;
 
-	let contract: Option<Arc<dyn listener::service_contract::ServiceContract>> = match contracts.len() {
-		0 => None,
-		1 => Some(contracts.pop().expect("contract.len() is 1; qed")),
-		_ => Some(Arc::new(listener::service_contract_aggregate::OnChainServiceContractAggregate::new(contracts))),
-	};
+		let connection_trigger: Box<dyn crate::key_server_cluster::connection_trigger::ConnectionTrigger<std::net::SocketAddr>> = match config.auto_migrate_enabled {
+			false => Box::new(crate::key_server_cluster::connection_trigger::SimpleConnectionTrigger::new(
+				key_server_set.clone(),
+				config.admin_address,
+			)),
+			true if config.admin_address.is_none() => Box::new(crate::key_server_cluster::connection_trigger_with_migration::ConnectionTriggerWithMigration::new(
+				key_server_set.clone(),
+				self_key_pair.clone(),
+			)),
+			true => return Err(Error::Internal(
+				"secret store admininstrator address key is specified with auto-migration enabled".into()
+			)),
+		};
+		let servers_set_change_creator_connector = connection_trigger.servers_set_change_creator_connector();
+		let mut nodes = key_server_set.snapshot().current_set;
+		let is_isolated = nodes.remove(&self_key_pair.address()).is_none();
+		let connection_provider = Arc::new(crate::network::tcp::NetConnectionsContainer::new(is_isolated, nodes));
 
-	let contract_listener = match contract {
-		Some(contract) => Some({
-			let listener = listener::service_contract_listener::ServiceContractListener::new(
-				listener::service_contract_listener::ServiceContractListenerParams {
-					contract: contract,
-					self_key_pair: self_key_pair.clone(),
-					key_server_set: key_server_set,
-					acl_storage: acl_storage,
-					cluster: cluster,
-					key_storage: key_storage,
-				}
-			)?;
-			trusted_client.add_listener(listener.clone());
-			listener
-		}),
-		None => None,
-	};
+		let cluster = crate::key_server_cluster::create_cluster(
+			self_key_pair.clone(),
+			config.admin_address,
+			key_storage.clone(),
+			acl_storage.clone(),
+			servers_set_change_creator_connector,
+			connection_provider.clone(),
+			move |message_processor| {
+				let connections_manager = Arc::new(NetConnectionsManager::new(
+					executor,
+					message_processor,
+					connection_trigger,
+					connection_provider,
+					listen_address,
+					self_key_pair,
+					false,
+				)?);
+				connections_manager.start()?;
+				Ok(connections_manager)
+			},
+		)?;
 
-	Ok(Box::new(listener::Listener::new(key_server, http_listener, contract_listener)))
+		key_server::KeyServerImpl::new(
+			cluster.client(),
+			acl_storage,
+			key_storage,
+		).map(|key_server| Arc::new(key_server))
+	}
 }

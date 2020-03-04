@@ -14,6 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
+mod accept_connection;
+mod connect;
+mod connection;
+
+pub use self::accept_connection::{AcceptConnection, accept_connection};
+pub use self::connect::{Connect, connect};
+//pub use self::connection::Connection;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::collections::btree_map::Entry;
 use std::io;
@@ -21,23 +29,24 @@ use std::net::{SocketAddr, IpAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use futures::{future, Future, Stream};
-use log::{error, trace, warn};
 use parking_lot::{Mutex, RwLock};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::timer::{Interval, timeout::Error as TimeoutError};
 use tokio_io::IoFuture;
 use parity_crypto::publickey::KeyPair;
-use parity_runtime::Executor;
-use crate::blockchain::SigningKeyPair;
-use crate::key_server_cluster::{Error, NodeId, ClusterConfiguration};
-use crate::key_server_cluster::cluster_connections::{ConnectionProvider, Connection, ConnectionManager};
+use log::{trace, warn};
+use primitives::executor::TokioHandle;
+use primitives::key_server_key_pair::KeyServerKeyPair;
+use crate::network::{ConnectionProvider, ConnectionManager, Connection};
+use crate::key_server_cluster::{Error, NodeId};
 use crate::key_server_cluster::connection_trigger::{Maintain, ConnectionTrigger};
 use crate::key_server_cluster::cluster_message_processor::MessageProcessor;
 use crate::key_server_cluster::io::{DeadlineStatus, ReadMessage, SharedTcpStream,
 	read_encrypted_message, WriteMessage, write_encrypted_message};
 use crate::key_server_cluster::message::{self, ClusterMessage, Message};
-use crate::key_server_cluster::net::{accept_connection as io_accept_connection,
-	connect as io_connect, Connection as IoConnection};
+use self::accept_connection::accept_connection as io_accept_connection;
+use crate::network::tcp::connect::connect as io_connect;
+use crate::network::tcp::connection::Connection as IoConnection;
 
 /// Empty future.
 pub type BoxedEmptyFuture = Box<dyn Future<Item = (), Error = ()> + Send>;
@@ -55,17 +64,6 @@ const KEEP_ALIVE_SEND_INTERVAL: Duration = Duration::from_secs(30);
 /// we must treat this node as non-responding && disconnect from it.
 const KEEP_ALIVE_DISCONNECT_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Network connection manager configuration.
-pub struct NetConnectionsManagerConfig {
-	/// Allow connecting to 'higher' nodes.
-	pub allow_connecting_to_higher_nodes: bool,
-	/// Interface to listen to.
-	pub listen_address: (String, u16),
-	/// True if we should autostart key servers set change session when servers set changes?
-	/// This will only work when servers set is configured using KeyServerSet contract.
-	pub auto_migrate_enabled: bool,
-}
-
 /// Network connections manager.
 pub struct NetConnectionsManager {
 	/// Address we're listening for incoming connections.
@@ -79,21 +77,26 @@ struct NetConnectionsData {
 	/// Allow connecting to 'higher' nodes.
 	allow_connecting_to_higher_nodes: bool,
 	/// Reference to tokio task executor.
-	executor: Executor,
+	executor: TokioHandle,
 	/// Key pair of this node.
-	self_key_pair: Arc<dyn SigningKeyPair>,
+	self_key_pair: Arc<dyn KeyServerKeyPair>,
 	/// Network messages processor.
 	message_processor: Arc<dyn MessageProcessor>,
 	/// Connections trigger.
-	trigger: Mutex<Box<dyn ConnectionTrigger>>,
+	trigger: Mutex<Box<dyn ConnectionTrigger<SocketAddr>>>,
 	/// Mutable connection data.
-	container: Arc<RwLock<NetConnectionsContainer>>,
+	container: Arc<NetConnectionsContainer>,
 }
 
 /// Network connections container. This is the only mutable data of NetConnectionsManager.
 /// The set of nodes is mutated by the connection trigger and the connections set is also
 /// mutated by spawned futures.
+#[derive(Clone)]
 pub struct NetConnectionsContainer {
+	data: Arc<RwLock<NetConnectionsContainerData>>,
+}
+
+pub struct NetConnectionsContainerData {
 	/// Is this node isolated from cluster?
 	pub is_isolated: bool,
 	/// Current key servers set.
@@ -104,7 +107,7 @@ pub struct NetConnectionsContainer {
 
 /// Network connection to single key server node.
 pub struct NetConnection {
-	executor: Executor,
+	executor: TokioHandle,
 	/// Id of the peer node.
 	node_id: NodeId,
 	/// Address of the peer node.
@@ -119,27 +122,53 @@ pub struct NetConnection {
 	stream: SharedTcpStream,
 }
 
+/// Secret store configuration
+#[derive(Debug, Clone)]
+pub struct NodeAddress {
+	/// IP address.
+	pub address: String,
+	/// IP port.
+	pub port: u16,
+}
+
+impl NetConnectionsContainer {
+	pub fn new(
+		is_isolated: bool,
+		nodes: BTreeMap<NodeId, SocketAddr>,
+	) -> Self {
+		NetConnectionsContainer {
+			data: Arc::new(RwLock::new(NetConnectionsContainerData {
+				is_isolated,
+				nodes,
+				connections: BTreeMap::new(),
+			})),
+		}
+	}
+}
+
 impl NetConnectionsManager {
 	/// Create new network connections manager.
 	pub fn new(
-		executor: Executor,
+		executor: TokioHandle,
 		message_processor: Arc<dyn MessageProcessor>,
-		trigger: Box<dyn ConnectionTrigger>,
-		container: Arc<RwLock<NetConnectionsContainer>>,
-		config: &ClusterConfiguration,
-		net_config: NetConnectionsManagerConfig,
+		trigger: Box<dyn ConnectionTrigger<SocketAddr>>,
+		container: Arc<NetConnectionsContainer>,
+		listen_address: NodeAddress,
+		self_key_pair: Arc<dyn KeyServerKeyPair>,
+		allow_connecting_to_higher_nodes: bool,
 	) -> Result<Self, Error> {
 		let listen_address = make_socket_address(
-			&net_config.listen_address.0,
-			net_config.listen_address.1)?;
+			&listen_address.address,
+			listen_address.port,
+		)?;
 
 		Ok(NetConnectionsManager {
 			listen_address,
 			data: Arc::new(NetConnectionsData {
-				allow_connecting_to_higher_nodes: net_config.allow_connecting_to_higher_nodes,
+				allow_connecting_to_higher_nodes,
 				executor,
 				message_processor,
-				self_key_pair: config.self_key_pair.clone(),
+				self_key_pair,
 				trigger: Mutex::new(trigger),
 				container,
 			}),
@@ -164,9 +193,9 @@ impl ConnectionManager for NetConnectionsManager {
 	}
 }
 
-impl ConnectionProvider for RwLock<NetConnectionsContainer> {
+impl ConnectionProvider for NetConnectionsContainer {
 	fn connected_nodes(&self) -> Result<BTreeSet<NodeId>, Error> {
-		let connections = self.read();
+		let connections = self.data.read();
 		if connections.is_isolated {
 			return Err(Error::NodeDisconnected);
 		}
@@ -175,7 +204,7 @@ impl ConnectionProvider for RwLock<NetConnectionsContainer> {
 	}
 
 	fn disconnected_nodes(&self) -> BTreeSet<NodeId> {
-		let connections = self.read();
+		let connections = self.data.read();
 		connections.nodes.keys()
 			.filter(|node_id| !connections.connections.contains_key(node_id))
 			.cloned()
@@ -183,7 +212,7 @@ impl ConnectionProvider for RwLock<NetConnectionsContainer> {
 	}
 
 	fn connection(&self, node: &NodeId) -> Option<Arc<dyn Connection>> {
-		match self.read().connections.get(node).cloned() {
+		match self.data.read().connections.get(node).cloned() {
 			Some(connection) => Some(connection),
 			None => None,
 		}
@@ -192,7 +221,7 @@ impl ConnectionProvider for RwLock<NetConnectionsContainer> {
 
 impl NetConnection {
 	/// Create new connection.
-	pub fn new(executor: Executor, is_inbound: bool, connection: IoConnection) -> NetConnection {
+	pub fn new(executor: TokioHandle, is_inbound: bool, connection: IoConnection) -> NetConnection {
 		NetConnection {
 			executor,
 			node_id: connection.node_id,
@@ -246,12 +275,12 @@ impl Connection for NetConnection {
 impl NetConnectionsData {
 	/// Executes closure for each active connection.
 	pub fn active_connections(&self) -> Vec<Arc<NetConnection>> {
-		self.container.read().connections.values().cloned().collect()
+		self.container.data.read().connections.values().cloned().collect()
 	}
 
 	/// Executes closure for each disconnected node.
 	pub fn disconnected_nodes(&self) -> Vec<(NodeId, SocketAddr)> {
-		let container = self.container.read();
+		let container = self.container.data.read();
 		container.nodes.iter()
 			.filter(|(node_id, _)| !container.connections.contains_key(node_id))
 			.map(|(node_id, addr)| (*node_id, *addr))
@@ -265,25 +294,25 @@ impl NetConnectionsData {
 	///   new connection by agreement
 	pub fn insert(&self, connection: Arc<NetConnection>) -> bool {
 		let node = *connection.node_id();
-		let mut container = self.container.write();
+		let mut container = self.container.data.write();
 		if !container.nodes.contains_key(&node) {
 			trace!(target: "secretstore_net", "{}: ignoring unknown connection from {} at {}",
-				self.self_key_pair.public(), node, connection.node_address());
+				self.self_key_pair.address(), node, connection.node_address());
 			return false;
 		}
 
 		if container.connections.contains_key(&node) {
 			// we have already connected to the same node
 			// the agreement is that node with lower id must establish connection to node with higher id
-			if (*self.self_key_pair.public() < node && connection.is_inbound())
-				|| (*self.self_key_pair.public() > node && !connection.is_inbound()) {
+			if (self.self_key_pair.address() < node && connection.is_inbound())
+				|| (self.self_key_pair.address() > node && !connection.is_inbound()) {
 				return false;
 			}
 		}
 
 		trace!(target: "secretstore_net",
 			"{}: inserting connection to {} at {}. Connected to {} of {} nodes",
-			self.self_key_pair.public(), node, connection.node_address(),
+			self.self_key_pair.address(), node, connection.node_address(),
 			container.connections.len() + 1, container.nodes.len());
 		container.connections.insert(node, connection);
 
@@ -295,14 +324,14 @@ impl NetConnectionsData {
 	pub fn remove(&self, connection: &NetConnection) -> bool {
 		let node_id = *connection.node_id();
 		let is_inbound = connection.is_inbound();
-		let mut container = self.container.write();
+		let mut container = self.container.data.write();
 		if let Entry::Occupied(entry) = container.connections.entry(node_id) {
 			if entry.get().is_inbound() != is_inbound {
 				return false;
 			}
 
 			trace!(target: "secretstore_net", "{}: removing connection to {} at {}",
-				self.self_key_pair.public(), node_id, entry.get().node_address());
+				self.self_key_pair.address(), node_id, entry.get().node_address());
 			entry.remove_entry();
 
 			true
@@ -388,17 +417,17 @@ fn net_process_connection_result(
 		},
 		Ok(DeadlineStatus::Meet(Err(err))) => {
 			warn!(target: "secretstore_net", "{}: protocol error '{}' when establishing {} connection{}",
-				data.self_key_pair.public(), err, if outbound_addr.is_some() { "outbound" } else { "inbound" },
+				data.self_key_pair.address(), err, if outbound_addr.is_some() { "outbound" } else { "inbound" },
 				outbound_addr.map(|a| format!(" with {}", a)).unwrap_or_default());
 		},
 		Ok(DeadlineStatus::Timeout) => {
 			warn!(target: "secretstore_net", "{}: timeout when establishing {} connection{}",
-				data.self_key_pair.public(), if outbound_addr.is_some() { "outbound" } else { "inbound" },
+				data.self_key_pair.address(), if outbound_addr.is_some() { "outbound" } else { "inbound" },
 				outbound_addr.map(|a| format!(" with {}", a)).unwrap_or_default());
 		},
 		Err(err) => {
 			warn!(target: "secretstore_net", "{}: network error '{}' when establishing {} connection{}",
-				data.self_key_pair.public(), err, if outbound_addr.is_some() { "outbound" } else { "inbound" },
+				data.self_key_pair.address(), err, if outbound_addr.is_some() { "outbound" } else { "inbound" },
 				outbound_addr.map(|a| format!(" with {}", a)).unwrap_or_default());
 		},
 	}
@@ -426,7 +455,7 @@ fn net_process_connection_messages(
 				},
 				Ok((_, Err(err))) => {
 					warn!(target: "secretstore_net", "{}: protocol error '{}' when reading message from node {}",
-						data.self_key_pair.public(), err, connection.node_id());
+						data.self_key_pair.address(), err, connection.node_id());
 					// continue serving connection
 					let process_messages_future = net_process_connection_messages(
 							data.clone(), connection).then(|_| Ok(()));
@@ -436,7 +465,7 @@ fn net_process_connection_messages(
 				Err(err) => {
 					let node_id = *connection.node_id();
 					warn!(target: "secretstore_net", "{}: network error '{}' when reading message from node {}",
-						data.self_key_pair.public(), err, node_id);
+						data.self_key_pair.address(), err, node_id);
 					// close connection
 					if data.remove(&*connection) {
 						let maintain_action = data.trigger.lock().on_connection_closed(&node_id);
@@ -459,7 +488,7 @@ fn net_schedule_maintain(data: Arc<NetConnectionsData>) {
 
 /// Maintain network connections.
 fn net_maintain(data: Arc<NetConnectionsData>) {
-	trace!(target: "secretstore_net", "{}: executing maintain procedures", data.self_key_pair.public());
+	trace!(target: "secretstore_net", "{}: executing maintain procedures", data.self_key_pair.address());
 
 	update_nodes_set(data.clone());
 	data.message_processor.maintain_sessions();
@@ -478,7 +507,7 @@ fn net_keep_alive(data: Arc<NetConnectionsData>) {
 		let last_message_diff = now - last_message_time;
 		if last_message_diff > KEEP_ALIVE_DISCONNECT_INTERVAL {
 			warn!(target: "secretstore_net", "{}: keep alive timeout for node {}",
-				data.self_key_pair.public(), connection.node_id());
+				data.self_key_pair.address(), connection.node_id());
 
 			let node_id = *connection.node_id();
 			if data.remove(&*connection) {
@@ -497,17 +526,15 @@ fn net_keep_alive(data: Arc<NetConnectionsData>) {
 fn net_connect_disconnected(data: Arc<NetConnectionsData>) {
 	let disconnected_nodes = data.disconnected_nodes();
 	for (node_id, address) in disconnected_nodes {
-		if data.allow_connecting_to_higher_nodes || *data.self_key_pair.public() < node_id {
+		if data.allow_connecting_to_higher_nodes || data.self_key_pair.address() < node_id {
 			net_connect(data.clone(), address);
 		}
 	}
 }
 
 /// Schedule future execution.
-fn execute<F: Future<Item = (), Error = ()> + Send + 'static>(executor: &Executor, f: F) {
-	if let Err(err) = future::Executor::execute(executor, Box::new(f)) {
-		error!("Secret store runtime unable to spawn task. Runtime is shutting down. ({:?})", err);
-	}
+fn execute<F: Future<Item = (), Error = ()> + Send + 'static>(executor: &TokioHandle, f: F) {
+	executor.spawn(f);
 }
 
 /// Try to update active nodes set from connection trigger.
@@ -524,16 +551,45 @@ fn maintain_connection_trigger(data: Arc<NetConnectionsData>, maintain_action: O
 			let session = data.message_processor.start_servers_set_change_session(session_params);
 			match session {
 				Ok(_) => trace!(target: "secretstore_net", "{}: started auto-migrate session",
-					data.self_key_pair.public()),
+					data.self_key_pair.address()),
 				Err(err) => trace!(target: "secretstore_net", "{}: failed to start auto-migrate session with: {}",
-					data.self_key_pair.public(), err),
+					data.self_key_pair.address(), err),
 			}
 		}
 	}
 	if maintain_action == Some(Maintain::SessionAndConnections) || maintain_action == Some(Maintain::Connections) {
+		let self_node_id = data.self_key_pair.address();
 		let mut trigger = data.trigger.lock();
-		let mut data = data.container.write();
-		trigger.maintain_connections(&mut *data);
+		let mut data = data.container.data.write();
+		if let Some(required_set) = trigger.maintain_connections() {
+			if !required_set.contains_key(&self_node_id) {
+				if !data.is_isolated {
+					trace!(target: "secretstore_net", "{}: isolated from cluser", self_node_id);
+				}
+
+				data.is_isolated = true;
+				data.connections.clear();
+				data.nodes.clear();
+				return;
+			}
+
+			data.is_isolated = false;
+			for node_to_disconnect in select_nodes_to_disconnect(&data.nodes, &required_set) {
+				if let Entry::Occupied(entry) = data.connections.entry(node_to_disconnect.clone()) {
+					trace!(target: "secretstore_net", "{}: adjusting connections - removing connection to {} at {}",
+						self_node_id, entry.get().node_id(), entry.get().node_address());
+					entry.remove();
+				}
+
+				data.nodes.remove(&node_to_disconnect);
+			}
+
+			for (node_to_connect, node_addr) in required_set {
+				if node_to_connect != self_node_id {
+					data.nodes.insert(node_to_connect.clone(), node_addr.clone());
+				}
+			}
+		}
 	}
 }
 
@@ -541,4 +597,14 @@ fn maintain_connection_trigger(data: Arc<NetConnectionsData>, maintain_action: O
 fn make_socket_address(address: &str, port: u16) -> Result<SocketAddr, Error> {
 	let ip_address: IpAddr = address.parse().map_err(|_| Error::InvalidNodeAddress)?;
 	Ok(SocketAddr::new(ip_address, port))
+}
+
+fn select_nodes_to_disconnect(current_set: &BTreeMap<NodeId, SocketAddr>, new_set: &BTreeMap<NodeId, SocketAddr>) -> Vec<NodeId> {
+	current_set.iter()
+		.filter(|&(node_id, node_addr)| match new_set.get(node_id) {
+			Some(new_node_addr) => node_addr != new_node_addr,
+			None => true,
+		})
+		.map(|(node_id, _)| node_id.clone())
+		.collect()
 }

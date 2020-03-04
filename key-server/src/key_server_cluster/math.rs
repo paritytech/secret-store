@@ -30,7 +30,11 @@ pub struct EncryptedSecret {
 
 /// Calculate the inversion of a Secret key (in place) using the `libsecp256k1` crate.
 fn invert_secret(s: &mut Secret) -> Result<(), Error> {
-	*s = secp256k1::SecretKey::parse(&s.0)?.inv().serialize().into();
+	*s = secp256k1::SecretKey::parse(&s.0)
+		.map_err(|err| Error::EthKey(format!("{}", err)))?
+		.inv()
+		.serialize()
+		.into();
 	Ok(())
 }
 
@@ -56,6 +60,12 @@ pub fn generate_random_scalar() -> Result<Secret, Error> {
 /// Generate random point.
 pub fn generate_random_point() -> Result<Public, Error> {
 	Ok(Random.generate().public().clone())
+}
+
+/// Generate random address.
+#[cfg(test)]
+pub fn generate_random_address() -> Result<parity_crypto::publickey::Address, Error> {
+	generate_random_point().map(|public| parity_crypto::publickey::public_to_address(&public))
 }
 
 /// Get X coordinate of point.
@@ -323,6 +333,7 @@ pub fn compute_joint_shadow_point_test<'a, I>(access_key: &Secret, common_point:
 pub fn decrypt_with_joint_shadow(threshold: usize, access_key: &Secret, encrypted_point: &Public, joint_shadow_point: &Public) -> Result<Public, Error> {
 	let mut inv_access_key = access_key.clone();
 	invert_secret(&mut inv_access_key)?;
+
 	let mut mul = joint_shadow_point.clone();
 	ec_math_utils::public_mul_secret(&mut mul, &inv_access_key)?;
 
@@ -539,7 +550,7 @@ pub fn compute_ecdsa_inversed_secret_coeff_from_shares(t: usize, id_numbers: &[S
 #[cfg(test)]
 pub mod tests {
 	use std::iter::once;
-	use parity_crypto::publickey::{KeyPair, Secret, recover, verify_public};
+	use parity_crypto::publickey::{KeyPair, recover, verify_public};
 	use super::*;
 
 	#[derive(Clone)]
@@ -1098,5 +1109,4 @@ pub mod tests {
 			Secret::from_str("0000000000000000000000000000000000000000000000000000000000000001").unwrap()
 		);
 	}
-
 }

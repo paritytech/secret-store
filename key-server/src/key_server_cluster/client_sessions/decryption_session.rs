@@ -21,7 +21,8 @@ use parking_lot::Mutex;
 use ethereum_types::{Address, H256};
 use log::warn;
 use parity_crypto::publickey::Secret;
-use crate::key_server_cluster::{Error, AclStorage, DocumentKeyShare, NodeId, SessionId, Requester,
+use primitives::{acl_storage::AclStorage, key_storage::KeyShare};
+use crate::key_server_cluster::{Error, NodeId, SessionId, Requester,
 	EncryptedDocumentKeyShadow, SessionMeta};
 use crate::key_server_cluster::cluster::Cluster;
 use crate::key_server_cluster::cluster_sessions::{SessionIdWithSubSession, ClusterSession, CompletionSignal};
@@ -55,7 +56,7 @@ struct SessionCore {
 	/// Decryption session access key.
 	pub access_key: Secret,
 	/// Key share.
-	pub key_share: Option<DocumentKeyShare>,
+	pub key_share: Option<KeyShare>,
 	/// Cluster which allows this node to send messages to other nodes in the cluster.
 	pub cluster: Arc<dyn Cluster>,
 	/// Session-level nonce.
@@ -97,7 +98,7 @@ pub struct SessionParams {
 	/// Session access key.
 	pub access_key: Secret,
 	/// Key share.
-	pub key_share: Option<DocumentKeyShare>,
+	pub key_share: Option<KeyShare>,
 	/// ACL storage.
 	pub acl_storage: Arc<dyn AclStorage>,
 	/// Cluster.
@@ -234,6 +235,16 @@ impl SessionImpl {
 	/// Get session origin.
 	pub fn origin(&self) -> Option<Address> {
 		self.data.lock().origin.clone()
+	}
+
+	/// Returns key threshold.
+	pub fn threshold(&self) -> usize {
+		self.core.meta.threshold
+	}
+
+	/// Returns true if shadow decryption is requested.
+	pub fn is_shadow_decryption_requested(&self) -> Option<bool> {
+		self.data.lock().is_shadow_decryption
 	}
 
 	/// Get session completion result (if available).
@@ -440,8 +451,7 @@ impl SessionImpl {
 		let key_version = key_share.version(data.version.as_ref().ok_or(Error::InvalidMessage)?)?.hash.clone();
 		let requester_public = data.consensus_session.consensus_job().executor().requester()
 			.ok_or(Error::InvalidStateForRequest)?
-			.public(&self.core.meta.id)
-			.map_err(Error::InsufficientRequesterData)?;
+			.public(&self.core.meta.id)?;
 		let decryption_job = DecryptionJob::new_on_slave(self.core.meta.self_node_id.clone(), self.core.access_key.clone(),
 			requester_public.clone(), key_share.clone(), key_version)?;
 		let decryption_transport = self.core.decryption_transport(false);
@@ -607,7 +617,7 @@ impl SessionImpl {
 
 		let key_version = key_share.version(version)?.hash.clone();
 		let requester = data.consensus_session.consensus_job().executor().requester().ok_or(Error::InvalidStateForRequest)?.clone();
-		let requester_public = requester.public(&core.meta.id).map_err(Error::InsufficientRequesterData)?;
+		let requester_public = requester.public(&core.meta.id)?;
 		let consensus_group = data.consensus_session.select_consensus_group()?.clone();
 		let decryption_job = DecryptionJob::new_on_master(core.meta.self_node_id.clone(),
 			core.access_key.clone(), requester_public.clone(), key_share.clone(), key_version,
@@ -821,7 +831,7 @@ impl JobTransport for DecryptionJobTransport {
 
 #[cfg(test)]
 pub fn create_default_decryption_session() -> Arc<SessionImpl> {
-	use crate::acl_storage::DummyAclStorage;
+	use primitives::acl_storage::InMemoryPermissiveAclStorage;
 	use crate::key_server_cluster::cluster::tests::DummyCluster;
 	use ethereum_types::H512;
 
@@ -836,7 +846,7 @@ pub fn create_default_decryption_session() -> Arc<SessionImpl> {
 		},
 		access_key: Secret::zero(),
 		key_share: Default::default(),
-		acl_storage: Arc::new(DummyAclStorage::default()),
+		acl_storage: Arc::new(InMemoryPermissiveAclStorage::default()),
 		cluster: Arc::new(DummyCluster::new(Default::default())),
 		nonce: 0,
 	}, Some(Requester::Public(H512::from_low_u64_be(2)))).unwrap().0)
@@ -846,9 +856,12 @@ pub fn create_default_decryption_session() -> Arc<SessionImpl> {
 mod tests {
 	use std::sync::Arc;
 	use std::collections::{BTreeMap, VecDeque};
-	use crate::acl_storage::DummyAclStorage;
+	use primitives::{
+		acl_storage::InMemoryPermissiveAclStorage,
+		key_storage::{KeyShare, KeyShareVersion},
+	};
 	use parity_crypto::publickey::{KeyPair, Random, Generator, Public, Secret, public_to_address};
-	use crate::key_server_cluster::{NodeId, DocumentKeyShare, DocumentKeyShareVersion, SessionId, Requester,
+	use crate::key_server_cluster::{NodeId, SessionId, Requester,
 		Error, EncryptedDocumentKeyShadow, SessionMeta};
 	use crate::key_server_cluster::cluster::tests::DummyCluster;
 	use crate::key_server_cluster::cluster_sessions::ClusterSession;
@@ -861,7 +874,7 @@ mod tests {
 
 	const SECRET_PLAIN: &'static str = "d2b57ae7619e070af0af6bc8c703c0cd27814c54d5d6a999cacac0da34ede279ca0d9216e85991029e54e2f0c92ee0bd30237725fa765cbdbfc4529489864c5f";
 	const DUMMY_SESSION_ID: [u8; 32]  = [1u8; 32];
-	fn prepare_decryption_sessions() -> (KeyPair, Vec<Arc<DummyCluster>>, Vec<Arc<DummyAclStorage>>, Vec<SessionImpl>) {
+	fn prepare_decryption_sessions() -> (KeyPair, Vec<Arc<DummyCluster>>, Vec<Arc<InMemoryPermissiveAclStorage>>, Vec<SessionImpl>) {
 		// prepare encrypted data + cluster configuration for scheme 4-of-5
 		let session_id = SessionId::from(DUMMY_SESSION_ID);
 		let access_key = Random.generate().secret().clone();
@@ -873,32 +886,32 @@ mod tests {
 			"c06546b5669877ba579ca437a5602e89425c53808c708d44ccd6afcaa4610fad".parse().unwrap(),
 		];
 		let id_numbers: Vec<(NodeId, Secret)> = vec![
-			(H512::from_str("b486d3840218837b035c66196ecb15e6b067ca20101e11bd5e626288ab6806ecc70b8307012626bd512bad1559112d11d21025cef48cc7a1d2f3976da08f36c8").unwrap(),
+			(Address::from_str("5e6d2e70e8176b42b3e5d9e31f03138555e69244").unwrap(),
 				"281b6bf43cb86d0dc7b98e1b7def4a80f3ce16d28d2308f934f116767306f06c".parse().unwrap()),
-			(H512::from_str("1395568277679f7f583ab7c0992da35f26cde57149ee70e524e49bdae62db3e18eb96122501e7cbb798b784395d7bb5a499edead0706638ad056d886e56cf8fb").unwrap(),
+			(Address::from_str("99322f4d787b4c3b6888b3fde69fc3854d2723ea").unwrap(),
 				"00125d85a05e5e63e214cb60fe63f132eec8a103aa29266b7e6e6c5b7597230b".parse().unwrap()),
-			(H512::from_str("99e82b163b062d55a64085bacfd407bb55f194ba5fb7a1af9c34b84435455520f1372e0e650a4f91aed0058cb823f62146ccb5599c8d13372c300dea866b69fc").unwrap(),
+			(Address::from_str("a76bf875aa039e6ee036f977c89d9ceb9b28e2f0").unwrap(),
 				"f43ac0fba42a5b6ed95707d2244659e89ba877b1c9b82c0d0a9dcf834e80fc62".parse().unwrap()),
-			(H512::from_str("7e05df9dd077ec21ed4bc45c9fe9e0a43d65fa4be540630de615ced5e95cf5c3003035eb713317237d7667feeeb64335525158f5f7411f67aca9645169ea554c").unwrap(),
+			(Address::from_str("937cdb8fd931ef68b838fce6fdf32bbc48a0c225").unwrap(),
 				"5a324938dfb2516800487d25ab7289ba8ec38811f77c3df602e4e65e3c9acd9f".parse().unwrap()),
-			(H512::from_str("321977760d1d8e15b047a309e4c7fe6f355c10bb5a06c68472b676926427f69f229024fa2692c10da167d14cdc77eb95d0fce68af0a0f704f0d3db36baa83bb2").unwrap(),
+			(Address::from_str("055efcd76c09d36ea5d95e485125b7728c9e46d9").unwrap(),
 				"12cf422d50002d04e52bd4906fd7f5f235f051ca36abfe37e061f8da248008d8".parse().unwrap()),
 		];
 		let common_point: Public = H512::from_str("6962be696e1bcbba8e64cc7fddf140f854835354b5804f3bb95ae5a2799130371b589a131bd39699ac7174ccb35fc4342dab05331202209582fc8f3a40916ab0").unwrap();
 		let encrypted_point: Public = H512::from_str("b07031982bde9890e12eff154765f03c56c3ab646ad47431db5dd2d742a9297679c4c65b998557f8008469afd0c43d40b6c5f6c6a1c7354875da4115237ed87a").unwrap();
-		let encrypted_datas: Vec<_> = (0..5).map(|i| DocumentKeyShare {
+		let encrypted_datas: Vec<_> = (0..5).map(|i| KeyShare {
 			author: Default::default(),
 			threshold: 3,
 			public: Default::default(),
 			common_point: Some(common_point.clone()),
 			encrypted_point: Some(encrypted_point.clone()),
-			versions: vec![DocumentKeyShareVersion {
+			versions: vec![KeyShareVersion {
 				hash: Default::default(),
 				id_numbers: id_numbers.clone().into_iter().collect(),
 				secret_share: secret_shares[i].clone(),
 			}],
 		}).collect();
-		let acl_storages: Vec<_> = (0..5).map(|_| Arc::new(DummyAclStorage::default())).collect();
+		let acl_storages: Vec<_> = (0..5).map(|_| Arc::new(InMemoryPermissiveAclStorage::default())).collect();
 		let clusters: Vec<_> = (0..5).map(|i| {
 			let cluster = Arc::new(DummyCluster::new(id_numbers.iter().nth(i).clone().unwrap().0));
 			for id_number in &id_numbers {
@@ -971,7 +984,7 @@ mod tests {
 	#[test]
 	fn constructs_in_cluster_of_single_node() {
 		let mut nodes = BTreeMap::new();
-		let self_node_id = Random.generate().public().clone();
+		let self_node_id = math::generate_random_address().unwrap();
 		nodes.insert(self_node_id, Random.generate().secret().clone());
 		let msg = [1u8; 32].into();
 		let requester = Some(Requester::Signature(parity_crypto::publickey::sign(Random.generate().secret(), &msg).unwrap()));
@@ -985,19 +998,19 @@ mod tests {
 				connected_nodes_count: 1,
 			},
 			access_key: Random.generate().secret().clone(),
-			key_share: Some(DocumentKeyShare {
+			key_share: Some(KeyShare {
 				author: Default::default(),
 				threshold: 0,
 				public: Default::default(),
 				common_point: Some(Random.generate().public().clone()),
 				encrypted_point: Some(Random.generate().public().clone()),
-				versions: vec![DocumentKeyShareVersion {
+				versions: vec![KeyShareVersion {
 					hash: Default::default(),
 					id_numbers: nodes,
 					secret_share: Random.generate().secret().clone(),
 				}],
 			}),
-			acl_storage: Arc::new(DummyAclStorage::default()),
+			acl_storage: Arc::new(InMemoryPermissiveAclStorage::default()),
 			cluster: Arc::new(DummyCluster::new(self_node_id.clone())),
 			nonce: 0,
 		};
@@ -1009,7 +1022,7 @@ mod tests {
 
 	#[test]
 	fn fails_to_initialize_if_does_not_have_a_share() {
-		let self_node_id = Random.generate().public().clone();
+		let self_node_id = math::generate_random_address().unwrap();
 		let session = SessionImpl::new(SessionParams {
 			meta: SessionMeta {
 				id: SessionId::from(DUMMY_SESSION_ID),
@@ -1021,7 +1034,7 @@ mod tests {
 			},
 			access_key: Random.generate().secret().clone(),
 			key_share: None,
-			acl_storage: Arc::new(DummyAclStorage::default()),
+			acl_storage: Arc::new(InMemoryPermissiveAclStorage::default()),
 			cluster: Arc::new(DummyCluster::new(self_node_id.clone())),
 			nonce: 0,
 		}, Some(Requester::Signature(
@@ -1033,9 +1046,8 @@ mod tests {
 	#[test]
 	fn fails_to_initialize_if_threshold_is_wrong() {
 		let mut nodes = BTreeMap::new();
-		let self_node_id = Random.generate().public().clone();
+		let self_node_id = math::generate_random_address().unwrap();
 		nodes.insert(self_node_id.clone(), Random.generate().secret().clone());
-		nodes.insert(Random.generate().public().clone(), Random.generate().secret().clone());
 		let session = SessionImpl::new(SessionParams {
 			meta: SessionMeta {
 				id: SessionId::from(DUMMY_SESSION_ID),
@@ -1046,19 +1058,19 @@ mod tests {
 				connected_nodes_count: 1,
 			},
 			access_key: Random.generate().secret().clone(),
-			key_share: Some(DocumentKeyShare {
+			key_share: Some(KeyShare {
 				author: Default::default(),
 				threshold: 2,
 				public: Default::default(),
 				common_point: Some(Random.generate().public().clone()),
 				encrypted_point: Some(Random.generate().public().clone()),
-				versions: vec![DocumentKeyShareVersion {
+				versions: vec![KeyShareVersion {
 					hash: Default::default(),
 					id_numbers: nodes,
 					secret_share: Random.generate().secret().clone(),
 				}],
 			}),
-			acl_storage: Arc::new(DummyAclStorage::default()),
+			acl_storage: Arc::new(InMemoryPermissiveAclStorage::default()),
 			cluster: Arc::new(DummyCluster::new(self_node_id.clone())),
 			nonce: 0,
 		}, Some(Requester::Signature(
@@ -1202,7 +1214,7 @@ mod tests {
 		let (_, clusters, acl_storages, sessions) = prepare_decryption_sessions();
 		let key_pair = Random.generate();
 
-		acl_storages[1].prohibit(public_to_address(key_pair.public()), SessionId::from(DUMMY_SESSION_ID));
+		acl_storages[1].forbid(public_to_address(key_pair.public()), SessionId::from(DUMMY_SESSION_ID));
 		sessions[0].initialize(Default::default(), Default::default(), false, false).unwrap();
 
 		do_messages_exchange_until(&clusters, &sessions, |_, _, _| sessions[0].state() == ConsensusSessionState::WaitingForPartialResults).unwrap();
@@ -1336,8 +1348,8 @@ mod tests {
 		// we need 4 out of 5 nodes to agree to do a decryption
 		// let's say that 2 of these nodes are disagree
 		let document = [1u8; 32].into();
-		acl_storages[1].prohibit(public_to_address(key_pair.public()), document);
-		acl_storages[2].prohibit(public_to_address(key_pair.public()), document);
+		acl_storages[1].forbid(public_to_address(key_pair.public()), document);
+		acl_storages[2].forbid(public_to_address(key_pair.public()), document);
 
 		assert_eq!(do_messages_exchange(&clusters, &sessions).unwrap_err(), Error::ConsensusUnreachable);
 
@@ -1352,7 +1364,7 @@ mod tests {
 
 		// we need 4 out of 5 nodes to agree to do a decryption
 		// let's say that 1 of these nodes (master) is disagree
-		acl_storages[0].prohibit(public_to_address(key_pair.public()), SessionId::from(DUMMY_SESSION_ID));
+		acl_storages[0].forbid(public_to_address(key_pair.public()), SessionId::from(DUMMY_SESSION_ID));
 
 		// now let's try to do a decryption
 		sessions[0].initialize(Default::default(), Default::default(), false, false).unwrap();

@@ -16,7 +16,7 @@
 
 use std::collections::BTreeSet;
 use hyper::Method;
-use primitives::{service::ServiceTask, requester::Requester, serialization::SerializablePublic};
+use primitives::{service::ServiceTask, requester::Requester, serialization::SerializableAddress};
 use crate::{DecomposedRequest, Error};
 
 pub fn parse_http_request(request: &DecomposedRequest) -> Result<ServiceTask, Error> {
@@ -92,7 +92,7 @@ fn parse_admin_request(request: &DecomposedRequest, path: Vec<String>) -> Result
 		_ => return Err(Error::InvalidRequest),
 	};
 
-	let new_servers_set: BTreeSet<SerializablePublic> = match serde_json::from_slice(&request.body) {
+	let new_servers_set: BTreeSet<SerializableAddress> = match serde_json::from_slice(&request.body) {
 		Ok(new_servers_set) => new_servers_set,
 		_ => return Err(Error::InvalidRequest),
 	};
@@ -119,10 +119,8 @@ mod tests {
 	const ENCRYPTED_POINT: &'static str = "1395568277679f7f583ab7c0992da35f26cde57149ee70e524e49bdae62d\
 		b3e18eb96122501e7cbb798b784395d7bb5a499edead0706638ad056d886e56cf8fb";
 	const MESSAGE_HASH: &'static str = "281b6bf43cb86d0dc7b98e1b7def4a80f3ce16d28d2308f934f116767306f06c";
-	const NODE1: &'static str = "843645726384530ffb0c52f175278143b5a93959af7864460f5a4fe\
-		c9afd1450cfb8aef63dec90657f43f55b13e0a73c7524d4e9a13c051b4e5f1e53f39ecd91";
-	const NODE2: &'static str = "07230e34ebfe41337d3ed53b186b3861751f2401ee74b988bba5569\
-		4e2a6f60c757677e194be2e53c3523cc8548694e636e6acb35c4e8fdc5e29d28679b9b2f3";
+	const NODE1_ADDRESS: &'static str = "9aa83d4e5ae7a548e34f3b54a713a4f28d876bb8";
+	const NODE2_ADDRESS: &'static str = "de925758b13aa7ea104d233888d970feb73b7dad";
 	const OLD_SET_SIGNATURE: &'static str = "a199fb39e11eefb61c78a4074a53c0d4424600a3e74aad4fb9d93a26\
 		c30d067e1d4d29936de0c73f19827394a1dd049480a0d581aee7ae7546968da7d3d1c2fd01";
 	const NEW_SET_SIGNATURE: &'static str = "b199fb39e11eefb61c78a4074a53c0d4424600a3e74aad4fb9d93a26\
@@ -233,13 +231,16 @@ mod tests {
 			Method::POST,
 			format!("/admin/servers_set_change/{}/{}", OLD_SET_SIGNATURE, NEW_SET_SIGNATURE),
 		);
-		servers_set_change_request.body = format!("[\"0x{}\",\"0x{}\"]", NODE1, NODE2).as_bytes().to_vec();
+		servers_set_change_request.body = format!("[\"0x{}\",\"0x{}\"]", NODE1_ADDRESS, NODE2_ADDRESS).as_bytes().to_vec();
 				assert_eq!(
 			parse_http_request(&servers_set_change_request).unwrap(),
 			ServiceTask::ChangeServersSet(
 				OLD_SET_SIGNATURE.parse().unwrap(),
 				NEW_SET_SIGNATURE.parse().unwrap(),
-				vec![NODE1.parse().unwrap(), NODE2.parse().unwrap()].into_iter().collect(),
+				vec![
+					NODE1_ADDRESS.parse().unwrap(),
+					NODE2_ADDRESS.parse().unwrap(),
+				].into_iter().collect(),
 		));
 	}
 

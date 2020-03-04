@@ -19,7 +19,8 @@ use ethereum_types::H256;
 use parity_crypto::publickey::{Public, Secret};
 use parity_crypto::DEFAULT_MAC;
 use parity_crypto::publickey::ecies::encrypt;
-use crate::key_server_cluster::{Error, NodeId, DocumentKeyShare, EncryptedDocumentKeyShadow};
+use primitives::key_storage::KeyShare;
+use crate::key_server_cluster::{Error, NodeId, EncryptedDocumentKeyShadow};
 use crate::key_server_cluster::math;
 use crate::key_server_cluster::jobs::job_session::{JobPartialRequestAction, JobPartialResponseAction, JobExecutor};
 
@@ -32,7 +33,7 @@ pub struct DecryptionJob {
 	/// Requester public key.
 	requester: Public,
 	/// Key share.
-	key_share: DocumentKeyShare,
+	key_share: KeyShare,
 	/// Key version.
 	key_version: H256,
 	/// Request id.
@@ -68,7 +69,7 @@ pub struct PartialDecryptionResponse {
 }
 
 impl DecryptionJob {
-	pub fn new_on_slave(self_node_id: NodeId, access_key: Secret, requester: Public, key_share: DocumentKeyShare, key_version: H256) -> Result<Self, Error> {
+	pub fn new_on_slave(self_node_id: NodeId, access_key: Secret, requester: Public, key_share: KeyShare, key_version: H256) -> Result<Self, Error> {
 		debug_assert!(key_share.common_point.is_some() && key_share.encrypted_point.is_some());
 		Ok(DecryptionJob {
 			self_node_id: self_node_id,
@@ -82,7 +83,7 @@ impl DecryptionJob {
 		})
 	}
 
-	pub fn new_on_master(self_node_id: NodeId, access_key: Secret, requester: Public, key_share: DocumentKeyShare, key_version: H256, is_shadow_decryption: bool, is_broadcast_session: bool) -> Result<Self, Error> {
+	pub fn new_on_master(self_node_id: NodeId, access_key: Secret, requester: Public, key_share: KeyShare, key_version: H256, is_shadow_decryption: bool, is_broadcast_session: bool) -> Result<Self, Error> {
 		debug_assert!(key_share.common_point.is_some() && key_share.encrypted_point.is_some());
 		Ok(DecryptionJob {
 			self_node_id: self_node_id,

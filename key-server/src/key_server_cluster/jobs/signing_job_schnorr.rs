@@ -17,7 +17,8 @@
 use std::collections::{BTreeSet, BTreeMap};
 use parity_crypto::publickey::{Public, Secret};
 use ethereum_types::H256;
-use crate::key_server_cluster::{Error, NodeId, DocumentKeyShare};
+use primitives::key_storage::KeyShare;
+use crate::key_server_cluster::{Error, NodeId};
 use crate::key_server_cluster::math;
 use crate::key_server_cluster::jobs::job_session::{JobPartialRequestAction, JobPartialResponseAction, JobExecutor};
 
@@ -26,7 +27,7 @@ pub struct SchnorrSigningJob {
 	/// This node id.
 	self_node_id: NodeId,
 	/// Key share.
-	key_share: DocumentKeyShare,
+	key_share: KeyShare,
 	/// Key version.
 	key_version: H256,
 	/// Session public key.
@@ -59,7 +60,7 @@ pub struct SchnorrPartialSigningResponse {
 }
 
 impl SchnorrSigningJob {
-	pub fn new_on_slave(self_node_id: NodeId, key_share: DocumentKeyShare, key_version: H256, session_public: Public, session_secret_coeff: Secret) -> Result<Self, Error> {
+	pub fn new_on_slave(self_node_id: NodeId, key_share: KeyShare, key_version: H256, session_public: Public, session_secret_coeff: Secret) -> Result<Self, Error> {
 		Ok(SchnorrSigningJob {
 			self_node_id: self_node_id,
 			key_share: key_share,
@@ -71,7 +72,7 @@ impl SchnorrSigningJob {
 		})
 	}
 
-	pub fn new_on_master(self_node_id: NodeId, key_share: DocumentKeyShare, key_version: H256, session_public: Public, session_secret_coeff: Secret, message_hash: H256) -> Result<Self, Error> {
+	pub fn new_on_master(self_node_id: NodeId, key_share: KeyShare, key_version: H256, session_public: Public, session_secret_coeff: Secret, message_hash: H256) -> Result<Self, Error> {
 		Ok(SchnorrSigningJob {
 			self_node_id: self_node_id,
 			key_share: key_share,

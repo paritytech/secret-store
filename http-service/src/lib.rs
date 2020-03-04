@@ -858,8 +858,8 @@ mod tests {
 			[1u8; 65].into(),
 			[2u8; 65].into(),
 			vec![
-				[3u8; 64].into(),
-				[4u8; 64].into(),
+				[3u8; 20].into(),
+				[4u8; 20].into(),
 			].into_iter().collect(),
 		);
 		futures::executor::block_on(serve_service_task(

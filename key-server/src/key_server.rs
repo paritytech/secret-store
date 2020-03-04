@@ -139,8 +139,6 @@ impl primitives::key_server::ServerKeyGenerator for KeyServerImpl {
 					.and_then(|key_share| {
 						let requester_is_author = requester_address
 							.map(|requester_address| requester_address == key_share.author)
-							// TODO: move this check to services
-							// if requester is None, we will return server key unconditionally
 							.unwrap_or(true);
 						if requester_is_author {
 							Ok(key_share)
@@ -343,12 +341,15 @@ impl primitives::key_server::DocumentKeyServer for KeyServerImpl {
 					.lock()
 					.cluster
 					.new_decryption_session(key_id, origin, requester, None, true, false)?;
+				let session_core = session.session.clone();
 				let document_key = session
 					.into_wait_future()
 					.compat()
 					.await?;
 				Ok((
-					0, // TODO: document_key.threshold
+					session_core.threshold(),
+					session_core.broadcast_shadows()
+						.ok_or(Error::Internal("Session is completed, but shadows are unknown".into()))?,
 					document_key.common_point.ok_or(Error::DocumentKeyIsNotFound)?,
 					document_key.decrypted_secret,
 				))
@@ -360,11 +361,11 @@ impl primitives::key_server::DocumentKeyServer for KeyServerImpl {
 					key_id,
 					requester: requester_copy,
 				},
-				result: session_result.map(|(threshold, common_point, encrypted_document_key)| primitives::key_server::DocumentKeyShadowRetrievalArtifacts {
+				result: session_result.map(|(threshold, participants_coefficients, common_point, encrypted_document_key)| primitives::key_server::DocumentKeyShadowRetrievalArtifacts {
 					threshold,
 					common_point,
 					encrypted_document_key,
-					participants_coefficients: std::collections::BTreeMap::new(), // TODO
+					participants_coefficients,
 				})
 			}
 		}.boxed()
@@ -382,6 +383,8 @@ impl primitives::key_server::MessageSigner for KeyServerImpl {
 		requester: Requester,
 		message: primitives::H256,
 	) -> Self::SignMessageSchnorrFuture {
+		debug_assert_eq!(origin, None, "Not supported");
+
 		let key_server_core = self.data.clone();
 		async move {
 			let requester_copy = requester.clone();
@@ -389,7 +392,7 @@ impl primitives::key_server::MessageSigner for KeyServerImpl {
 				let session = key_server_core
 					.lock()
 					.cluster
-					.new_schnorr_signing_session(key_id, requester, None, message)?; // TODO: pass origin || assert(None)
+					.new_schnorr_signing_session(key_id, requester, None, message)?;
 				session
 					.into_wait_future()
 					.compat()
@@ -417,6 +420,8 @@ impl primitives::key_server::MessageSigner for KeyServerImpl {
 		requester: Requester,
 		message: primitives::H256,
 	) -> Self::SignMessageEcdsaFuture {
+		debug_assert_eq!(origin, None, "Not supported");
+
 		let key_server_core = self.data.clone();
 		async move {
 			let requester_copy = requester.clone();
@@ -424,7 +429,7 @@ impl primitives::key_server::MessageSigner for KeyServerImpl {
 				let session = key_server_core
 					.lock()
 					.cluster
-					.new_ecdsa_signing_session(key_id, requester, None, message)?; // TODO: pass origin || assert(None)
+					.new_ecdsa_signing_session(key_id, requester, None, message)?;
 				session
 					.into_wait_future()
 					.compat()
@@ -450,12 +455,38 @@ impl primitives::key_server::AdminSessionsServer for KeyServerImpl {
 
 	fn change_servers_set(
 		&self,
-		_origin: Option<primitives::key_server::Origin>,
-		_old_set_signature: primitives::Signature,
-		_new_set_signature: primitives::Signature,
-		_new_servers_set: BTreeSet<primitives::KeyServerPublic>,
+		origin: Option<primitives::key_server::Origin>,
+		old_set_signature: primitives::Signature,
+		new_set_signature: primitives::Signature,
+		new_servers_set: BTreeSet<primitives::KeyServerId>,
 	) -> Self::ChangeServersSetFuture {
-		unimplemented!("TODO")
+		debug_assert_eq!(origin, None, "Not supported");
+
+		let key_server_core = self.data.clone();
+		async move {
+			let session_result = async move {
+				let session = key_server_core
+					.lock()
+					.cluster
+					.new_servers_set_change_session(
+						None,
+						None,
+						new_servers_set,
+						old_set_signature,
+						new_set_signature,
+					)?;
+				session
+					.into_wait_future()
+					.compat()
+					.await
+			}.await;
+
+			primitives::key_server::SessionResult {
+				origin,
+				params: (),
+				result: session_result,
+			}
+		}.boxed()
 	}
 }
 

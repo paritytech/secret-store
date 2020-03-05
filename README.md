@@ -1,4 +1,9 @@
-# secret-store
+# Secret-Store 2.0
+The work is in progress. Please do not use it in production.
+
+# Secret-Store 1.0
+To reference this version of Secret Store, use [this commit](https://github.com/paritytech/secret-store/commit/ebe751db6af07425d2e1823ac05a84d0fafe3dad).
+
 This is Parity Secret Store. Detailed information about the solution can be found on [Parity wiki](https://wiki.parity.io/Secret-Store)
 
 The entry point for the library is the method for launching new key server instance:

@@ -1,0 +1,13 @@
+[package]
+name = "parity-secretstore-substrate-service"
+version = "1.0.0"
+license = "GPL-3.0"
+authors = ["Parity Technologies <admin@parity.io>"]
+edition = "2018"
+
+[dependencies]
+futures = "0.3"
+log = "0.4"
+parity-crypto = { version = "0.5", features = ["publickey"] }
+blockchain-service = { package = "parity-secretstore-blockchain-service", path = "../blockchain-service" }
+primitives = { package = "parity-secretstore-primitives", path = "../primitives" }

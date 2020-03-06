@@ -112,11 +112,13 @@ pub trait ClusterClient: Send + Sync {
 	/// Get active generation session with given id.
 	#[cfg(test)]
 	fn generation_session(&self, session_id: &SessionId) -> Option<Arc<GenerationSession>>;
-	#[cfg(test)]
+
+	/// Are we connected to every required server?
 	fn is_fully_connected(&self) -> bool;
 	/// Try connect to disconnected nodes.
-	#[cfg(test)]
 	fn connect(&self);
+	/// True if node has active sessions.
+	fn has_active_sessions(&self) -> bool;
 }
 
 /// Cluster access for single session participant.
@@ -516,14 +518,16 @@ impl<C: ConnectionManager> ClusterClient for ClusterClientImpl<C> {
 		self.data.sessions.generation_sessions.get(session_id, false)
 	}
 
-	#[cfg(test)]
 	fn is_fully_connected(&self) -> bool {
 		self.data.connections.provider().disconnected_nodes().is_empty()
 	}
 
-	#[cfg(test)]
 	fn connect(&self) {
 		self.data.connections.connect()
+	}
+
+	fn has_active_sessions(&self) -> bool {
+		self.data.sessions.has_active_sessions()
 	}
 }
 
@@ -844,6 +848,7 @@ pub mod tests {
 		fn generation_session(&self, _session_id: &SessionId) -> Option<Arc<GenerationSession>> { unimplemented!("test-only") }
 		fn is_fully_connected(&self) -> bool { true }
 		fn connect(&self) {}
+		fn has_active_sessions(&self) -> bool { false }
 	}
 
 	impl DummyCluster {

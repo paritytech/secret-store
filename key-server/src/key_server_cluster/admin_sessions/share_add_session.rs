@@ -512,7 +512,12 @@ impl<T> SessionImpl<T> where T: SessionTransport {
 		let mut data = self.data.lock();
 
 		// check state
-		if data.state == SessionState::ConsensusEstablishing && data.secret_subshares.is_some() {
+		if data.state == SessionState::ConsensusEstablishing
+			&& self.core.key_share.is_none()
+			&& data.new_key_share.is_none()
+		{
+			return Err(Error::TooEarlyForRequest);
+		} else if data.state == SessionState::ConsensusEstablishing && data.secret_subshares.is_some() {
 			data.state = SessionState::WaitingForKeysDissemination;
 		} else if data.state != SessionState::WaitingForKeysDissemination {
 			return Err(Error::InvalidStateForRequest);

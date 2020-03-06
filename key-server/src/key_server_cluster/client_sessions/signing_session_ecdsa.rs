@@ -834,15 +834,21 @@ impl SessionImpl {
 
 	/// Check if all nonces are generated.
 	fn check_nonces_generated(data: &SessionData) -> bool {
-		let expect_proof = "check_nonces_generated is called when som nonce-gen session is completed;
-			all nonce-gen sessions are created at once; qed";
-		let sig_nonce_generation_session = data.sig_nonce_generation_session.as_ref().expect(expect_proof);
-		let inv_nonce_generation_session = data.inv_nonce_generation_session.as_ref().expect(expect_proof);
-		let inv_zero_generation_session = data.inv_zero_generation_session.as_ref().expect(expect_proof);
-
-		sig_nonce_generation_session.state() == GenerationSessionState::Finished
-			&& inv_nonce_generation_session.state() == GenerationSessionState::Finished
-			&& inv_zero_generation_session.state() == GenerationSessionState::Finished
+		data
+			.sig_nonce_generation_session
+			.as_ref()
+			.map(|s| s.state() == GenerationSessionState::Finished)
+			.unwrap_or(false)
+		&& data
+			.inv_nonce_generation_session
+			.as_ref()
+			.map(|s| s.state() == GenerationSessionState::Finished)
+			.unwrap_or(false)
+		&& data
+			.inv_zero_generation_session
+			.as_ref()
+			.map(|s| s.state() == GenerationSessionState::Finished)
+			.unwrap_or(false)
 	}
 
 	/// Broadcast inversed nonce share.

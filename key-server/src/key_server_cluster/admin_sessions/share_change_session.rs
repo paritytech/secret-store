@@ -149,13 +149,11 @@ impl ShareChangeSession {
 			self.create_share_add_session()?;
 		}
 
-		let change_state_needed = self.share_add_session.as_ref()
-			.map(|share_add_session| {
-				let was_finished = share_add_session.is_finished();
-				share_add_session.process_message(sender, message)
-					.map(|_| share_add_session.is_finished() && !was_finished)
-			})
-			.unwrap_or(Err(Error::InvalidMessage))?;
+		let share_add_session = self.share_add_session.as_ref().ok_or(Error::InvalidMessage)?;
+		let was_finished = share_add_session.is_finished();
+		share_add_session.process_message(sender, message)?;
+
+		let change_state_needed = share_add_session.is_finished() && !was_finished;
 		if change_state_needed {
 			self.proceed_to_next_state()?;
 		}

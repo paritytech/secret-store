@@ -22,6 +22,9 @@ mod key_server;
 mod serialization;
 pub mod network;
 
+#[cfg(test)]
+mod integration_test;
+
 use std::sync::Arc;
 use crate::network::tcp::{NetConnectionsManager};
 

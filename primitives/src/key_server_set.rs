@@ -19,6 +19,7 @@ use std::{
 	fmt::Debug,
 	net::SocketAddr,
 };
+use parking_lot::RwLock;
 use ethereum_types::H256;
 use crate::KeyServerId;
 
@@ -69,6 +70,11 @@ pub trait KeyServerSet: Send + Sync {
 /// In-memory key server set implementation.
 #[derive(Default)]
 pub struct InMemoryKeyServerSet {
+	data: RwLock<InMemoryKeyServerSetData>,
+}
+
+#[derive(Default)]
+struct InMemoryKeyServerSetData {
 	is_isolated: bool,
 	nodes: BTreeMap<KeyServerId, SocketAddr>,
 }
@@ -77,9 +83,21 @@ impl InMemoryKeyServerSet {
 	/// Create new in-memory key server set.
 	pub fn new(is_isolated: bool, nodes: BTreeMap<KeyServerId, SocketAddr>) -> Self {
 		InMemoryKeyServerSet {
-			is_isolated: is_isolated,
-			nodes: nodes,
+			data: RwLock::new(InMemoryKeyServerSetData {
+				is_isolated: is_isolated,
+				nodes: nodes,
+			}),
 		}
+	}
+
+	/// Set is isolated flag.
+	pub fn set_isolated(&self, is_isolated: bool) {
+		self.data.write().is_isolated = is_isolated;
+	}
+
+	/// Add new key server to the set.
+	pub fn add_key_server(&self, id: KeyServerId, address: SocketAddr) {
+		self.data.write().nodes.insert(id, address);
 	}
 }
 
@@ -87,13 +105,14 @@ impl KeyServerSet for InMemoryKeyServerSet {
 	type NetworkAddress = SocketAddr;
 
 	fn is_isolated(&self) -> bool {
-		self.is_isolated
+		self.data.read().is_isolated
 	}
 
 	fn snapshot(&self) -> KeyServerSetSnapshot<Self::NetworkAddress> {
+		let data = self.data.read();
 		KeyServerSetSnapshot {
-			current_set: self.nodes.clone(),
-			new_set: self.nodes.clone(),
+			current_set: data.nodes.clone(),
+			new_set: data.nodes.clone(),
 			migration: None,
 		}
 	}

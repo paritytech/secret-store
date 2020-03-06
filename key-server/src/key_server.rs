@@ -337,10 +337,13 @@ impl primitives::key_server::DocumentKeyServer for KeyServerImpl {
 		async move {
 			let requester_copy = requester.clone();
 			let session_result = async move {
+				// TODO: second true means that all key servers will have encrypted shadows
+				// keys - this is only required for blockchains
+				// => pass this from outside
 				let session = key_server_core
 					.lock()
 					.cluster
-					.new_decryption_session(key_id, origin, requester, None, true, false)?;
+					.new_decryption_session(key_id, origin, requester, None, true, true)?;
 				let session_core = session.session.clone();
 				let document_key = session
 					.into_wait_future()

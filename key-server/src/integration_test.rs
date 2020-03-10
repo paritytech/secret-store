@@ -14,17 +14,23 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
-// TODO: encrypt actual data using generated key and then decrypt using retrieved key
-
 use std::{
 	collections::BTreeSet,
 	sync::Arc,
 };
 use log::trace;
-use parity_crypto::publickey::{Address, Generator, KeyPair, Random, public_to_address, sign, verify_public};
+use parity_crypto::{
+	DEFAULT_MAC,
+	publickey::{
+		Address, Generator, KeyPair, Random, Public, Secret,
+		public_to_address, sign, verify_public,
+		ecies::decrypt,
+	},
+};
 use primitives::{
+	ServerKeyId,
 	acl_storage::InMemoryPermissiveAclStorage,
-	executor::{tokio_runtime, TokioHandle},
+	executor::{tokio_runtime, TokioHandle, TokioRuntime},
 	key_server::{AdminSessionsServer, DocumentKeyServer, MessageSigner, ServerKeyGenerator},
 	key_server_key_pair::InMemoryKeyServerKeyPair,
 	key_server_set::InMemoryKeyServerSet,
@@ -156,10 +162,7 @@ fn integration_test_with_manual_servers_set_change_session() {
 				KEY2_THRESHOLD,
 			)
 	);
-	assert_eq!(
-		dk_generation_result.result.map(drop),
-		Ok(()),
-	);
+	let document_key_plain2 = dk_generation_result.result.unwrap().document_key;
 
 	// store dk#1
 	trace!(target: "secretstore", "STORING DK#1...");
@@ -183,72 +186,43 @@ fn integration_test_with_manual_servers_set_change_session() {
 
 	// retrieve dk#2
 	trace!(target: "secretstore", "RETRIEVING DK#2...");
-	let requester1_signature = sign(requester1_key_pair.secret(), &KEY2_ID.into()).unwrap();
-	let dk_retrieval_result = client_runtime.block_on_std(
-		key_servers[0]
-			.restore_document_key(
-				None,
-				KEY2_ID.into(),
-				Requester::Signature(requester1_signature.clone()),
-			)
-	);
-	assert_eq!(
-		dk_retrieval_result.result.map(drop),
-		Ok(()),
+	restore_document_key_at(
+		&mut client_runtime,
+		&*key_servers[0],
+		KEY2_ID.into(),
+		&requester1_key_pair,
+		document_key_plain2,
 	);
 
 	// retrieve dk#1 shadow
 	trace!(target: "secretstore", "RETRIEVING DK#1 SHADOW...");
-	let requester1_signature = sign(requester1_key_pair.secret(), &KEY1_ID.into()).unwrap();
-	let dk_shadow_retrieval_result = client_runtime.block_on_std(
-		key_servers[0]
-			.restore_document_key_shadow(
-				None,
-				KEY1_ID.into(),
-				Requester::Signature(requester1_signature.clone()),
-			)
-	);
-	assert_eq!(
-		dk_shadow_retrieval_result.result.map(drop),
-		Ok(()),
+	restore_document_key_shadow_at(
+		&mut client_runtime,
+		&*key_servers[0],
+		KEY1_ID.into(),
+		&requester1_key_pair,
+		document_key_plain1,
 	);
 
 	// Schnorr-sign using sk#1
 	trace!(target: "secretstore", "SCHNORR-SIGNING USING SK#1...");
-	let message_to_sign = *Random.generate().secret().clone();
-	let schnorr_signing_result = client_runtime.block_on_std(
-		key_servers[0]
-			.sign_message_schnorr(
-				None,
-				KEY1_ID.into(),
-				Requester::Signature(requester1_signature.clone()),
-				message_to_sign,
-			)
-	);
-	let schnorr_signature = schnorr_signing_result.result.unwrap();
-	assert!(math::verify_schnorr_signature(
+	generate_schnorr_signature_at(
+		&mut client_runtime,
+		&*key_servers[0],
+		KEY1_ID.into(),
+		&requester1_key_pair,
 		&server_key1,
-		&(schnorr_signature.signature_c.into(), schnorr_signature.signature_s.into()),
-		&message_to_sign,
-	).unwrap());
+	);
 
 	// ECDSA-sign using sk#1
 	trace!(target: "secretstore", "ECDSA-SIGNING USING SK#1...");
-	let ecdsa_signing_result = client_runtime.block_on_std(
-		key_servers[0]
-			.sign_message_ecdsa(
-				None,
-				KEY1_ID.into(),
-				Requester::Signature(requester1_signature.clone()),
-				message_to_sign,
-			)
-	);
-	let ecdsa_signature = ecdsa_signing_result.result.unwrap();
-	assert!(verify_public(
+	generate_ecdsa_signature_at(
+		&mut client_runtime,
+		&*key_servers[0],
+		KEY1_ID.into(),
+		&requester1_key_pair,
 		&server_key1,
-		&ecdsa_signature.signature,
-		&message_to_sign,
-	).unwrap());
+	);
 
 	// add remaining key servers
 	trace!(target: "secretstore", "ADDING MORE KEY SERVERS...");
@@ -319,6 +293,46 @@ fn integration_test_with_manual_servers_set_change_session() {
 			assert_eq!(key1_share.versions.len(), expected_versions, "{}", public_to_address(key_servers_key_pairs[index].public()));
 			assert_eq!(key2_share.versions.len(), expected_versions, "{}", public_to_address(key_servers_key_pairs[index].public()));
 		});
+
+	// retrieve dk#1
+	trace!(target: "secretstore", "RETRIEVING DK#1...");
+	restore_document_key_at(
+		&mut client_runtime,
+		&*key_servers[0],
+		KEY1_ID.into(),
+		&requester1_key_pair,
+		document_key_plain1,
+	);
+
+	// retrieve dk#2 shadow
+	trace!(target: "secretstore", "RETRIEVING DK#2 SHADOW...");
+	restore_document_key_shadow_at(
+		&mut client_runtime,
+		&*key_servers[0],
+		KEY2_ID.into(),
+		&requester1_key_pair,
+		document_key_plain2,
+	);
+
+	// Schnorr-sign using sk#1
+	trace!(target: "secretstore", "SCHNORR-SIGNING USING SK#1...");
+	generate_schnorr_signature_at(
+		&mut client_runtime,
+		&*key_servers[0],
+		KEY1_ID.into(),
+		&requester1_key_pair,
+		&server_key1,
+	);
+
+	// ECDSA-sign using sk#1
+	trace!(target: "secretstore", "ECDSA-SIGNING USING SK#1...");
+	generate_ecdsa_signature_at(
+		&mut client_runtime,
+		&*key_servers[0],
+		KEY1_ID.into(),
+		&requester1_key_pair,
+		&server_key1,
+	);
 }
 
 /// Start single key server over TCP network.
@@ -363,4 +377,110 @@ fn wait_until_true(predicate: impl Fn() -> bool) {
 
 		std::thread::sleep(std::time::Duration::from_millis(100));
 	}
+}
+
+/// Restore document key and assert that it equals to plain document key.
+fn restore_document_key_at(
+	client_runtime: &mut TokioRuntime,
+	key_server: &KeyServerImpl,
+	key_id: ServerKeyId,
+	requester: &KeyPair,
+	expected_key: Public,
+) {
+	let dk_retrieval_result = client_runtime.block_on_std(
+		key_server
+			.restore_document_key(
+				None,
+				key_id,
+				Requester::Signature(sign(requester.secret(), &key_id).unwrap()),
+			)
+	);
+	assert_eq!(
+		dk_retrieval_result.result.map(|result| result.document_key),
+		Ok(expected_key),
+	);
+}
+
+/// Restore document key shadow and assert that it equals to plain document key.
+fn restore_document_key_shadow_at(
+	client_runtime: &mut TokioRuntime,
+	key_server: &KeyServerImpl,
+	key_id: ServerKeyId,
+	requester: &KeyPair,
+	expected_key: Public,
+) {
+	let dk_shadow_retrieval_result = client_runtime.block_on_std(
+		key_server
+			.restore_document_key_shadow(
+				None,
+				key_id,
+				Requester::Signature(sign(requester.secret(), &key_id).unwrap()),
+			)
+	);
+	let document_key_shadow = dk_shadow_retrieval_result.result.unwrap();
+	let restored_document_key = math::decrypt_with_shadow_coefficients(
+		document_key_shadow.encrypted_document_key,
+		document_key_shadow.common_point,
+		document_key_shadow
+			.participants_coefficients
+			.values()
+			.map(|c| Secret::copy_from_slice(&decrypt(requester.secret(), &DEFAULT_MAC, &c).unwrap()).unwrap())
+			.collect(),
+	).unwrap();
+	assert_eq!(
+		restored_document_key,
+		expected_key,
+	);
+}
+
+/// Generate and verify Schnorr signature.
+fn generate_schnorr_signature_at(
+	client_runtime: &mut TokioRuntime,
+	key_server: &KeyServerImpl,
+	key_id: ServerKeyId,
+	requester: &KeyPair,
+	server_key: &Public,
+) {
+	let message_to_sign = *Random.generate().secret().clone();
+	let schnorr_signing_result = client_runtime.block_on_std(
+		key_server
+			.sign_message_schnorr(
+				None,
+				key_id,
+				Requester::Signature(sign(requester.secret(), &key_id).unwrap()),
+				message_to_sign,
+			)
+	);
+	let schnorr_signature = schnorr_signing_result.result.unwrap();
+	assert!(math::verify_schnorr_signature(
+		server_key,
+		&(schnorr_signature.signature_c.into(), schnorr_signature.signature_s.into()),
+		&message_to_sign,
+	).unwrap());
+}
+
+/// Generate and verify ECDSA signature.
+fn generate_ecdsa_signature_at(
+	client_runtime: &mut TokioRuntime,
+	key_server: &KeyServerImpl,
+	key_id: ServerKeyId,
+	requester: &KeyPair,
+	server_key: &Public,
+) {
+	let message_to_sign = *Random.generate().secret().clone();
+	let ecdsa_signing_result = client_runtime.block_on_std(
+		key_server
+			.sign_message_ecdsa(
+				None,
+				key_id,
+				Requester::Signature(sign(requester.secret(), &key_id).unwrap()),
+				message_to_sign,
+			)
+	);
+	let ecdsa_signature = ecdsa_signing_result.result.unwrap();
+	assert!(verify_public(
+		server_key,
+		&ecdsa_signature.signature,
+		&message_to_sign,
+	).unwrap());
 }

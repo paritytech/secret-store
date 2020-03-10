@@ -14,7 +14,6 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
-// TODO: key_Server.cluster().has_active_sessions() before starting SSchange session
 // TODO: encrypt actual data using generated key and then decrypt using retrieved key
 
 use std::{
@@ -29,7 +28,7 @@ use primitives::{
 	key_server::{AdminSessionsServer, DocumentKeyServer, MessageSigner, ServerKeyGenerator},
 	key_server_key_pair::InMemoryKeyServerKeyPair,
 	key_server_set::InMemoryKeyServerSet,
-	key_storage::InMemoryKeyStorage,
+	key_storage::{KeyStorage, InMemoryKeyStorage},
 	requester::Requester,
 };
 use crate::{
@@ -43,7 +42,7 @@ use crate::{
 /// Total number of key servers.
 const TOTAL_KEY_SERVERS: usize = 6;
 /// Number of key servers in initial set.
-const INITIAL_KEY_SEVERS: usize = 5;
+const INITIAL_KEY_SERVERS: usize = 5;
 
 /// Admin secret key.
 const ADMIN_SECRET: [u8; 32] = [100u8; 32];
@@ -83,10 +82,10 @@ fn integration_test_with_manual_servers_set_change_session() {
 	trace!(target: "secretstore", "STARTING KEY SERVERS...");
 	let key_server_sets = (0..TOTAL_KEY_SERVERS)
 		.map(|index| Arc::new(InMemoryKeyServerSet::new(
-			index >= INITIAL_KEY_SEVERS,
+			index >= INITIAL_KEY_SERVERS,
 			key_servers_key_pairs
 				.iter()
-				.take(INITIAL_KEY_SEVERS)
+				.take(INITIAL_KEY_SERVERS)
 				.enumerate()
 				.map(|(index, kp)| (
 					kp.address(),
@@ -95,12 +94,16 @@ fn integration_test_with_manual_servers_set_change_session() {
 				.collect()
 		)))
 		.collect::<Vec<_>>();
+	let key_storages = (0..TOTAL_KEY_SERVERS)
+		.map(|_| Arc::new(InMemoryKeyStorage::default()))
+		.collect::<Vec<_>>();
 	let key_servers = (0..TOTAL_KEY_SERVERS)
 		.map(|index| start_key_server(
 			key_servers_runtimes[index].executor(),
 			Some(public_to_address(admin_key_pair.public())),
 			index,
 			key_server_sets[index].clone(),
+			key_storages[index].clone(),
 			&key_servers_key_pairs,
 		))
 		.collect::<Vec<_>>();
@@ -108,13 +111,9 @@ fn integration_test_with_manual_servers_set_change_session() {
 	// wait until key servers are connected to each other
 	trace!(target: "secretstore", "CONNECTING...");
 	key_servers.iter().for_each(|ks| ks.cluster().connect());
-	loop {
-		if key_servers.iter().take(INITIAL_KEY_SEVERS).all(|ks| ks.cluster().is_fully_connected()) {
-			break;
-		}
-
-		std::thread::sleep(std::time::Duration::from_millis(100));
-	}
+	wait_until_true(
+		|| key_servers.iter().take(INITIAL_KEY_SERVERS).all(|ks| ks.cluster().is_fully_connected())
+	);
 
 	// generate sk#1
 	trace!(target: "secretstore", "GENERATING SK#1...");
@@ -254,7 +253,7 @@ fn integration_test_with_manual_servers_set_change_session() {
 	// add remaining key servers
 	trace!(target: "secretstore", "ADDING MORE KEY SERVERS...");
 	for key_server_set in key_server_sets {
-		for i in INITIAL_KEY_SEVERS..TOTAL_KEY_SERVERS {
+		for i in INITIAL_KEY_SERVERS..TOTAL_KEY_SERVERS {
 			key_server_set.add_key_server(
 				public_to_address(key_servers_key_pairs[i].public()),
 				format!("127.0.0.1:{}", 10_000u16 + i as u16).parse().unwrap(),
@@ -264,16 +263,14 @@ fn integration_test_with_manual_servers_set_change_session() {
 	}
 
 	// and wait until all key servers are connected
+	// and there's no active sessions (we can't start SSChange session if there is any)
 	trace!(target: "secretstore", "CONNECTING...");
 	key_servers.iter().for_each(|ks| ks.cluster().connect());
-	loop {
-		if key_servers.iter().all(|ks| ks.cluster().is_fully_connected()) {
-			break;
-		}
+	wait_until_true(
+		|| key_servers.iter().all(|ks| ks.cluster().is_fully_connected())
+			&& !key_servers.iter().any(|ks| ks.cluster().has_active_sessions())
+	);
 
-		std::thread::sleep(std::time::Duration::from_millis(100));
-	}
-	
 	// run change servers set change session
 	// (mind that old_set is equal to new_set here, since we can't distinguish between
 	// old connections and connections-with-additional-nodes with disabled auto-migration)
@@ -286,7 +283,6 @@ fn integration_test_with_manual_servers_set_change_session() {
 		.iter()
 		.map(|kp| public_to_address(kp.public()))
 		.collect::<BTreeSet<_>>();
-println!("=== SERVERS: {:?}", key_servers_key_pairs.iter().map(|kp| public_to_address(kp.public())).collect::<Vec<_>>());
 	let old_set_admin_signature = sign(admin_key_pair.secret(), &ordered_nodes_hash(&old_set)).unwrap();
 	let new_set_admin_signature = sign(admin_key_pair.secret(), &ordered_nodes_hash(&new_set)).unwrap();
 	let change_servers_set_result = client_runtime.block_on_std(
@@ -303,13 +299,26 @@ println!("=== SERVERS: {:?}", key_servers_key_pairs.iter().map(|kp| public_to_ad
 		Ok(()),
 	);
 
-	// ensure that shares of sk#1 and sk#2 are on ks#4
+	// wait until session is completed on ALL servers
+	trace!(target: "secretstore", "WAITING UNTIL SESSION IS COMPLETED...");
+	wait_until_true(
+		|| !key_servers.iter().any(|ks| ks.cluster().has_active_sessions())
+	);
 
-	// remove ks#1
-
-	// run change servers set change session
-
-	// ensure that shares of sk#1 and sk#2 are on ks#4
+	// ensure that shares of sk#1 and sk#2 are on all key server
+	(0..TOTAL_KEY_SERVERS)
+		.for_each(|index| {
+			let key1_share = key_storages[index].get(&KEY1_ID.into()).unwrap().unwrap();
+			let key2_share = key_storages[index].get(&KEY2_ID.into()).unwrap().unwrap();
+			assert!(key1_share.common_point.is_some());
+			assert!(key2_share.common_point.is_some());
+			assert!(key1_share.encrypted_point.is_some());
+			assert!(key2_share.encrypted_point.is_some());
+			
+			let expected_versions = if index >= INITIAL_KEY_SERVERS { 1 } else { 2 };
+			assert_eq!(key1_share.versions.len(), expected_versions, "{}", public_to_address(key_servers_key_pairs[index].public()));
+			assert_eq!(key2_share.versions.len(), expected_versions, "{}", public_to_address(key_servers_key_pairs[index].public()));
+		});
 }
 
 /// Start single key server over TCP network.
@@ -318,13 +327,13 @@ fn start_key_server(
 	admin_address: Option<Address>,
 	key_server_index: usize,
 	key_server_set: Arc<InMemoryKeyServerSet>,
+	key_storage: Arc<InMemoryKeyStorage>,
 	key_servers_key_pairs: &[KeyPair],
 ) -> Arc<KeyServerImpl> {
 	let key_server_key_pair = Arc::new(InMemoryKeyServerKeyPair::new(
 		key_servers_key_pairs[key_server_index].clone(),
 	));
 	let acl_storage = Arc::new(InMemoryPermissiveAclStorage::default());
-	let key_storage = Arc::new(InMemoryKeyStorage::default());
 
 	crate::Builder::new()
 		.with_self_key_pair(key_server_key_pair)
@@ -343,4 +352,15 @@ fn start_key_server(
 			key_server_set,
 		)
 		.unwrap()
+}
+
+/// Wait until predicate returns true.
+fn wait_until_true(predicate: impl Fn() -> bool) {
+	loop {
+		if predicate() {
+			break;
+		}
+
+		std::thread::sleep(std::time::Duration::from_millis(100));
+	}
 }

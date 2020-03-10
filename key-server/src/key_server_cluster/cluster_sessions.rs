@@ -287,6 +287,14 @@ impl ClusterSessions {
 		self.admin_sessions.preserve_sessions.store(true, Ordering::Relaxed);
 	}
 
+	/// Returns true if there are any active sessions.
+	pub fn has_active_sessions(&self) -> bool {
+		match *self.generation_sessions.container_state.lock() {
+			ClusterSessionsContainerState::Idle => false,
+			ClusterSessionsContainerState::Active(_) | ClusterSessionsContainerState::Exclusive => true,
+		}
+	}
+
 	/// Send session-level keep-alive messages.
 	pub fn sessions_keep_alive(&self) {
 		self.admin_sessions.send_keep_alive(&*SERVERS_SET_CHANGE_SESSION_ID, &self.self_node_id);

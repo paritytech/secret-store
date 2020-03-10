@@ -375,9 +375,6 @@ mod tests {
 
 	#[test]
 	fn should_accept_document_key_shadow_retrieval_request() {
-let key_pair = parity_crypto::publickey::KeyPair::from_secret([3; 32].into()).unwrap();
-println!("{:?} {:?}", key_pair.public(), parity_crypto::publickey::public_to_address(key_pair.public()));
-
 		default_initialization_with_five_servers().execute_with(|| {
 			// ask to retrieve document key shadow
 			DocumentKeyShadowRetrievalService::<TestRuntime>::retrieve(

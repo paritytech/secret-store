@@ -512,7 +512,12 @@ impl<T> SessionImpl<T> where T: SessionTransport {
 		let mut data = self.data.lock();
 
 		// check state
-		if data.state == SessionState::ConsensusEstablishing && data.secret_subshares.is_some() {
+		if data.state == SessionState::ConsensusEstablishing
+			&& self.core.key_share.is_none()
+			&& data.new_key_share.is_none()
+		{
+			return Err(Error::TooEarlyForRequest);
+		} else if data.state == SessionState::ConsensusEstablishing && data.secret_subshares.is_some() {
 			data.state = SessionState::WaitingForKeysDissemination;
 		} else if data.state != SessionState::WaitingForKeysDissemination {
 			return Err(Error::InvalidStateForRequest);
@@ -638,12 +643,10 @@ impl<T> SessionImpl<T> where T: SessionTransport {
 		let old_key_version = old_key_share.version(data.version.as_ref().expect(explanation)).expect(explanation);
 		let version_holders = data.version_holders.as_ref()
 			.expect("disseminate_common_share_data is only called on master node; version holders is created during initialization on master node; qed");
-		let consensus_group = data.secret_subshares.as_ref()
-			.expect("disseminate_common_share_data is only called on master node; consensus group is created during initialization on master node; qed");
 		let nodes = data.id_numbers.as_ref()
 			.expect("nodes are filled during consensus establishing; common share data sent after consensus is established; qed")
 			.keys()
-			.filter(|n| !consensus_group.contains_key(n));
+			.filter(|n| !version_holders.contains(n));
 		for new_node in nodes {
 			core.transport.send(new_node, ShareAddMessage::KeyShareCommon(KeyShareCommon {
 				session: core.meta.id.clone().into(),

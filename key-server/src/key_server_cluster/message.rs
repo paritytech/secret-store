@@ -1524,8 +1524,8 @@ impl fmt::Display for ServersSetChangeMessage {
 			ServersSetChangeMessage::UnknownSessionsRequest(_) => write!(f, "UnknownSessionsRequest"),
 			ServersSetChangeMessage::UnknownSessions(_) => write!(f, "UnknownSessions"),
 			ServersSetChangeMessage::ShareChangeKeyVersionNegotiation(ref m) => write!(f, "ShareChangeKeyVersionNegotiation.{}", m.message),
-			ServersSetChangeMessage::InitializeShareChangeSession(_) => write!(f, "InitializeShareChangeSession"),
-			ServersSetChangeMessage::ConfirmShareChangeSessionInitialization(_) => write!(f, "ConfirmShareChangeSessionInitialization"),
+			ServersSetChangeMessage::InitializeShareChangeSession(ref m) => write!(f, "InitializeShareChangeSession({})", m.key_id.0),
+			ServersSetChangeMessage::ConfirmShareChangeSessionInitialization(ref m) => write!(f, "ConfirmShareChangeSessionInitialization({})", m.key_id.0),
 			ServersSetChangeMessage::ServersSetChangeDelegate(_) => write!(f, "ServersSetChangeDelegate"),
 			ServersSetChangeMessage::ServersSetChangeDelegateResponse(_) => write!(f, "ServersSetChangeDelegateResponse"),
 			ServersSetChangeMessage::ServersSetChangeShareAddMessage(ref m) => write!(f, "ServersSetChangeShareAddMessage.{}", m.message),
@@ -1539,9 +1539,9 @@ impl fmt::Display for ShareAddMessage {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match *self {
 			ShareAddMessage::ShareAddConsensusMessage(ref m) => write!(f, "ShareAddConsensusMessage.{}", m.message),
-			ShareAddMessage::KeyShareCommon(_) => write!(f, "KeyShareCommon"),
-			ShareAddMessage::NewKeysDissemination(_) => write!(f, "NewKeysDissemination"),
-			ShareAddMessage::ShareAddError(_) => write!(f, "ShareAddError"),
+			ShareAddMessage::KeyShareCommon(ref m) => write!(f, "KeyShareCommon({})", m.session.0),
+			ShareAddMessage::NewKeysDissemination(ref m) => write!(f, "NewKeysDissemination({})", m.session.0),
+			ShareAddMessage::ShareAddError(ref m) => write!(f, "ShareAddError({})", m.session.0),
 
 		}
 	}

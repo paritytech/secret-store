@@ -64,6 +64,6 @@ mod cluster_sessions_creator;
 pub mod connection_trigger;
 pub mod connection_trigger_with_migration;
 pub mod io;
-mod jobs;
+pub mod jobs;
 pub mod math;
 pub mod message;

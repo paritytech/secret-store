@@ -531,7 +531,7 @@ impl SessionImpl {
 
 					broadcast_job_session.result()
 				},
-				None => return Err(Error::InvalidMessage),
+				None => return Err(Error::TooEarlyForRequest),
 			}
 		};
 

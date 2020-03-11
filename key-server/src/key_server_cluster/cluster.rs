@@ -1013,10 +1013,14 @@ pub mod tests {
 			let acl_storage = Arc::new(InMemoryPermissiveAclStorage::default());
 			let cluster = new_test_cluster(
 				self.messages.clone(),
-				Arc::new(InMemoryKeyServerSet::new(false, self.nodes().iter()
-					.chain(::std::iter::once(&node_key_pair.address()))
-					.map(|n| (*n, format!("127.0.0.1:{}", 13).parse().unwrap()))
-					.collect())),
+				Arc::new(InMemoryKeyServerSet::new(
+					false,
+					node_key_pair.address(),
+					self.nodes().iter()
+						.chain(::std::iter::once(&node_key_pair.address()))
+						.map(|n| (*n, format!("127.0.0.1:{}", 13).parse().unwrap()))
+						.collect())
+				),
 				node_key_pair.clone(),
 				key_storage.clone(),
 				acl_storage.clone(),
@@ -1110,9 +1114,14 @@ pub mod tests {
 			.map(|i| {
 				new_test_cluster(
 					messages.clone(),
-					Arc::new(InMemoryKeyServerSet::new(false, key_pairs.iter().enumerate()
-						.map(|(j, kp)| (kp.address(), format!("127.0.0.1:{}", ports_begin + j as u16).parse().unwrap()))
-						.collect())),
+					Arc::new(InMemoryKeyServerSet::new(
+						false,
+						key_pairs[i].address(),
+						key_pairs.iter()
+							.enumerate()
+							.map(|(j, kp)| (kp.address(), format!("127.0.0.1:{}", ports_begin + j as u16).parse().unwrap()))
+						.collect()),
+					),
 					key_pairs[i].clone(),
 					key_storages[i].clone(),
 					acl_storages[i].clone(),

@@ -19,7 +19,7 @@
 
 use codec::{Encode, Decode};
 use frame_support::{StorageValue, StorageMap, StorageDoubleMap, ensure};
-use ss_runtime_primitives::{KeyServerId, ServerKeyId};
+use primitives::{KeyServerId, ServerKeyId};
 use frame_system::ensure_signed;
 use crate::service::{Responses, ResponseSupport, SecretStoreService};
 use super::{
@@ -63,7 +63,7 @@ impl<T: Trait> ServerKeyRetrievalService<T> {
 
 		// check if there are no pending request for the same key
 		ensure!(
-			!ServerKeyRetrievalRequests::<T>::exists(id),
+			!ServerKeyRetrievalRequests::<T>::contains_key(id),
 			"The same request is already queued",
 		);
 

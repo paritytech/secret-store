@@ -31,7 +31,7 @@ mod service;
 
 use frame_support::{StorageMap, traits::Currency, decl_module, decl_event, decl_storage, ensure};
 use frame_system::{self as system, ensure_signed};
-use ss_runtime_primitives::{
+use primitives::{
 	EntityId,
 	KeyServerId,
 	ServerKeyId,
@@ -66,13 +66,13 @@ decl_module! {
 		/// Claim given id.
 		pub fn claim_id(origin, id: EntityId) {
 			ensure!(
-				!<ClaimedBy<T>>::exists(&id),
+				!<ClaimedBy<T>>::contains_key(&id),
 				"Id is already claimed",
 			);
 
 			let origin = ensure_signed(origin)?;
 			ensure!(
-				!<ClaimedId<T>>::exists(&origin),
+				!<ClaimedId<T>>::contains_key(&origin),
 				"Account has already claimed an id",
 			);
 
@@ -295,47 +295,55 @@ decl_event!(
 decl_storage! {
 	trait Store for Module<T: Trait> as SecretStore {
 		pub Owner get(owner) config(): T::AccountId;
-		ClaimedId get(claimed_address): map T::AccountId => Option<EntityId>;
-		ClaimedBy get(claimed_by): map EntityId => Option<T::AccountId>;
+		ClaimedId get(claimed_address): map hasher(blake2_256) T::AccountId => Option<EntityId>;
+		ClaimedBy get(claimed_by): map hasher(blake2_256) EntityId => Option<T::AccountId>;
 
 		IsInitialized: bool;
 		CurrentSetChangeBlock: <T as frame_system::Trait>::BlockNumber;
 
-		CurrentKeyServers: linked_map KeyServerId => Option<KeyServer>;
-		MigrationKeyServers: linked_map KeyServerId => Option<KeyServer>;
-		NewKeyServers: linked_map KeyServerId => Option<KeyServer>;
+		CurrentKeyServers: linked_map hasher(blake2_256) KeyServerId => Option<KeyServer>;
+		MigrationKeyServers: linked_map hasher(blake2_256) KeyServerId => Option<KeyServer>;
+		NewKeyServers: linked_map hasher(blake2_256) KeyServerId => Option<KeyServer>;
 		MigrationId: Option<(MigrationIdT, KeyServerId)>;
-		MigrationConfirmations: map KeyServerId => ();
+		MigrationConfirmations: map hasher(blake2_256) KeyServerId => ();
 
 		pub ServerKeyGenerationFee get(server_key_generation_fee) config(): BalanceOf<T>;
 		ServerKeyGenerationRequestsKeys: Vec<ServerKeyId>;
-		ServerKeyGenerationRequests: map ServerKeyId
+		ServerKeyGenerationRequests: map hasher(blake2_256) ServerKeyId
 			=> Option<ServerKeyGenerationRequest<<T as frame_system::Trait>::BlockNumber>>;
-		ServerKeyGenerationResponses: double_map ServerKeyId, twox_128(sp_core::H512) => u8;
+		ServerKeyGenerationResponses: double_map
+			hasher(blake2_256) ServerKeyId,
+			hasher(twox_128) sp_core::H512 => u8;
 
 		pub ServerKeyRetrievalFee get(server_key_retrieval_fee) config(): BalanceOf<T>;
 		ServerKeyRetrievalRequestsKeys: Vec<ServerKeyId>;
-		ServerKeyRetrievalRequests: map ServerKeyId
+		ServerKeyRetrievalRequests: map hasher(blake2_256) ServerKeyId
 			=> Option<ServerKeyRetrievalRequest<<T as frame_system::Trait>::BlockNumber>>;
-		ServerKeyRetrievalResponses: double_map ServerKeyId, twox_128(sp_core::H512) => u8;
-		ServerKeyRetrievalThresholdResponses: double_map ServerKeyId, twox_128(u8) => u8;
+		ServerKeyRetrievalResponses: double_map
+			hasher(blake2_256) ServerKeyId,
+			hasher(twox_128) sp_core::H512 => u8;
+		ServerKeyRetrievalThresholdResponses: double_map
+			hasher(blake2_256) ServerKeyId,
+			hasher(twox_128) u8 => u8;
 
 		pub DocumentKeyStoreFee get(document_key_store_fee) config(): BalanceOf<T>;
 		DocumentKeyStoreRequestsKeys: Vec<ServerKeyId>;
-		DocumentKeyStoreRequests: map ServerKeyId
+		DocumentKeyStoreRequests: map hasher(blake2_256) ServerKeyId
 			=> Option<DocumentKeyStoreRequest<<T as frame_system::Trait>::BlockNumber>>;
-		DocumentKeyStoreResponses: double_map ServerKeyId, twox_128(()) => u8;
+		DocumentKeyStoreResponses: double_map
+			hasher(blake2_256) ServerKeyId,
+			hasher(twox_128) () => u8;
 
 		pub DocumentKeyShadowRetrievalFee get(document_key_shadow_retrieval_fee) config(): BalanceOf<T>;
 		DocumentKeyShadowRetrievalRequestsKeys: Vec<(ServerKeyId, EntityId)>;
-		DocumentKeyShadowRetrievalRequests: map (ServerKeyId, EntityId)
+		DocumentKeyShadowRetrievalRequests: map hasher(blake2_256) (ServerKeyId, EntityId)
 			=> Option<DocumentKeyShadowRetrievalRequest<<T as frame_system::Trait>::BlockNumber>>;
-		DocumentKeyShadowRetrievalCommonResponses:
-			double_map (ServerKeyId, EntityId),
-			twox_128((sp_core::H512, u8)) => u8;
-		DocumentKeyShadowRetrievalPersonalResponses:
-			double_map (ServerKeyId, EntityId),
-			twox_128((KeyServersMask, sp_core::H512)) => DocumentKeyShadowRetrievalPersonalData;
+		DocumentKeyShadowRetrievalCommonResponses: double_map
+			hasher(blake2_256) (ServerKeyId, EntityId),
+			hasher(twox_128) (sp_core::H512, u8) => u8;
+		DocumentKeyShadowRetrievalPersonalResponses: double_map
+			hasher(blake2_256) (ServerKeyId, EntityId),
+			hasher(twox_128) (KeyServersMask, sp_core::H512) => DocumentKeyShadowRetrievalPersonalData;
 	}
 	add_extra_genesis {
 		config(is_initialization_completed): bool;
@@ -377,7 +385,7 @@ impl<T: Trait> Module<T> {
 	}
 
 	///
-	pub fn server_key_generation_tasks(begin: u32, end: u32) -> Vec<ss_runtime_primitives::service::ServiceTask> {
+	pub fn server_key_generation_tasks(begin: u32, end: u32) -> Vec<primitives::service::ServiceTask> {
 		ServerKeyGenerationRequestsKeys::get()
 			.into_iter()
 			.skip(begin as usize)
@@ -386,7 +394,7 @@ impl<T: Trait> Module<T> {
 				let request = ServerKeyGenerationRequests::<T>::get(&key_id)
 					.expect("every key from ServerKeyGenerationRequestsKeys has corresponding
 						entry in ServerKeyGenerationRequests; qed");
-				ss_runtime_primitives::service::ServiceTask::GenerateServerKey(
+				primitives::service::ServiceTask::GenerateServerKey(
 					key_id,
 					request.author,
 					request.threshold,
@@ -401,13 +409,13 @@ impl<T: Trait> Module<T> {
 	}
 
 	///
-	pub fn server_key_retrieval_tasks(begin: u32, end: u32) -> Vec<ss_runtime_primitives::service::ServiceTask> {
+	pub fn server_key_retrieval_tasks(begin: u32, end: u32) -> Vec<primitives::service::ServiceTask> {
 		ServerKeyRetrievalRequestsKeys::get()
 			.into_iter()
 			.skip(begin as usize)
 			.take(end.saturating_sub(begin) as usize)
 			.map(|key_id| {
-				ss_runtime_primitives::service::ServiceTask::RetrieveServerKey(
+				primitives::service::ServiceTask::RetrieveServerKey(
 					key_id,
 				)
 			})
@@ -420,7 +428,7 @@ impl<T: Trait> Module<T> {
 	}
 
 	///
-	pub fn document_key_store_tasks(begin: u32, end: u32) -> Vec<ss_runtime_primitives::service::ServiceTask> {
+	pub fn document_key_store_tasks(begin: u32, end: u32) -> Vec<primitives::service::ServiceTask> {
 		DocumentKeyStoreRequestsKeys::get()
 			.into_iter()
 			.skip(begin as usize)
@@ -429,7 +437,7 @@ impl<T: Trait> Module<T> {
 				let request = DocumentKeyStoreRequests::<T>::get(&key_id)
 					.expect("every key from DocumentKeyStoreRequestsKeys has corresponding
 						entry in DocumentKeyStoreRequests; qed");
-				ss_runtime_primitives::service::ServiceTask::StoreDocumentKey(
+				primitives::service::ServiceTask::StoreDocumentKey(
 					key_id,
 					request.author,
 					request.common_point,
@@ -445,7 +453,7 @@ impl<T: Trait> Module<T> {
 	}
 
 	///
-	pub fn document_key_shadow_retrieval_tasks(begin: u32, end: u32) -> Vec<ss_runtime_primitives::service::ServiceTask> {
+	pub fn document_key_shadow_retrieval_tasks(begin: u32, end: u32) -> Vec<primitives::service::ServiceTask> {
 		DocumentKeyShadowRetrievalRequestsKeys::get()
 			.into_iter()
 			.skip(begin as usize)
@@ -455,11 +463,11 @@ impl<T: Trait> Module<T> {
 					.expect("every key from DocumentKeyStoreRequestsKeys has corresponding
 						entry in DocumentKeyStoreRequests; qed");
 				match request.threshold.is_some() {
-					true => ss_runtime_primitives::service::ServiceTask::RetrieveShadowDocumentKeyCommon(
+					true => primitives::service::ServiceTask::RetrieveShadowDocumentKeyCommon(
 						key_id,
 						requester,
 					),
-					false => ss_runtime_primitives::service::ServiceTask::RetrieveShadowDocumentKeyPersonal(
+					false => primitives::service::ServiceTask::RetrieveShadowDocumentKeyPersonal(
 						key_id,
 						request.requester_public,
 					),

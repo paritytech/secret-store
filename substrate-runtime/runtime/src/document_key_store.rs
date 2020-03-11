@@ -19,7 +19,7 @@
 
 use codec::{Encode, Decode};
 use frame_support::{StorageValue, StorageMap, StorageDoubleMap, ensure};
-use ss_runtime_primitives::{EntityId, ServerKeyId, KeyServerId};
+use primitives::{EntityId, ServerKeyId, KeyServerId};
 use frame_system::ensure_signed;
 use crate::service::{Responses, ResponseSupport, SecretStoreService};
 use super::{
@@ -66,7 +66,7 @@ impl<T: Trait> DocumentKeyStoreService<T> {
 
 		// check if there are no pending request for the same key
 		ensure!(
-			!DocumentKeyStoreRequests::<T>::exists(id),
+			!DocumentKeyStoreRequests::<T>::contains_key(id),
 			"The same request is already queued",
 		);
 
@@ -423,9 +423,12 @@ mod tests {
 				[32; 32].into(),
 			).unwrap();
 
-			assert_eq!(
-				0,
-				frame_system::Module::<TestRuntime>::events().len(),
+			assert!(
+				!frame_system::Module::<TestRuntime>::events().iter()
+					.any(|event| match event.event {
+						TestEvent::secret_store(_) => true,
+						_ => false,
+					}),
 			);
 		});
 	}

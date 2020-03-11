@@ -18,7 +18,7 @@
 use frame_support::StorageMap;
 use frame_system::ensure_signed;
 use sp_std::marker::PhantomData;
-use ss_runtime_primitives::KeyServerId;
+use primitives::KeyServerId;
 use crate::{ClaimedId, Trait};
 
 /// Entity id related data storage.

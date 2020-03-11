@@ -36,7 +36,9 @@ mod secret_store {
 
 impl_outer_event! {
 	pub enum TestEvent for TestRuntime {
-		pallet_balances<T>, secret_store,
+		frame_system<T>,
+		pallet_balances<T>,
+		secret_store,
 	}
 }
 
@@ -67,10 +69,14 @@ impl frame_system::Trait for TestRuntime {
 	type MaximumBlockLength = MaximumBlockLength;
 	type AvailableBlockRatio = AvailableBlockRatio;
 	type Version = ();
+	type ModuleToIndex = ();
+	type AccountData = pallet_balances::AccountData<u64>;
+	type OnNewAccount = ();
+	type OnKilledAccount = ();
 }
 
 parameter_types! {
-	pub const ExistentialDeposit: u64 = 0;
+	pub const ExistentialDeposit: u64 = 1;
 	pub const TransferFee: u64 = 0;
 	pub const CreationFee: u64 = 0;
 	pub const TransactionBaseFee: u64 = 1;
@@ -79,14 +85,10 @@ parameter_types! {
 
 impl pallet_balances::Trait for TestRuntime {
 	type Balance = u64;
-	type OnNewAccount = ();
-	type OnFreeBalanceZero = ();
 	type Event = TestEvent;
-	type TransferPayment = ();
 	type DustRemoval = ();
 	type ExistentialDeposit = ExistentialDeposit;
-	type TransferFee = TransferFee;
-	type CreationFee = CreationFee;
+	type AccountStore = frame_system::Module<TestRuntime>;
 }
 
 impl Trait for TestRuntime {
@@ -190,7 +192,6 @@ fn initialize(
 			(REQUESTER1, 10_000_000),
 			(REAL_REQUESTER1, 10_000_000),
 		],
-		vesting: vec![],
 	};
 	config.assimilate_storage(&mut t).unwrap();
 

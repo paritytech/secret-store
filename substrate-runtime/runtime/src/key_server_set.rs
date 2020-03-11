@@ -34,7 +34,7 @@
 
 use frame_support::ensure;
 use sp_std::vec::Vec;
-use ss_runtime_primitives::{
+use primitives::{
 	KeyServerId,
 	key_server_set::{KeyServerSetSnapshot, KeyServerSetMigration, MigrationId, KeyServerNetworkAddress},
 };

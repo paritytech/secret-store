@@ -68,36 +68,60 @@ pub trait KeyServerSet: Send + Sync {
 }
 
 /// In-memory key server set implementation.
-#[derive(Default)]
 pub struct InMemoryKeyServerSet {
+	support_migration: bool,
+	self_id: KeyServerId,
 	data: RwLock<InMemoryKeyServerSetData>,
 }
 
-#[derive(Default)]
 struct InMemoryKeyServerSetData {
-	is_isolated: bool,
-	nodes: BTreeMap<KeyServerId, SocketAddr>,
+	current_set: BTreeMap<KeyServerId, SocketAddr>,
+	new_set: BTreeMap<KeyServerId, SocketAddr>,
+	migration: Option<KeyServerSetMigration<SocketAddr>>,
 }
 
 impl InMemoryKeyServerSet {
-	/// Create new in-memory key server set.
-	pub fn new(is_isolated: bool, nodes: BTreeMap<KeyServerId, SocketAddr>) -> Self {
+	/// Create new in-memory key server set WITHOUT migration support.
+	pub fn new(
+		support_migration: bool,
+		key_server_id: KeyServerId,
+		nodes: BTreeMap<KeyServerId, SocketAddr>,
+	) -> Self {
 		InMemoryKeyServerSet {
+			support_migration,
+			self_id: key_server_id,
 			data: RwLock::new(InMemoryKeyServerSetData {
-				is_isolated: is_isolated,
-				nodes: nodes,
+				current_set: nodes.clone(),
+				new_set: nodes,
+				migration: None,
 			}),
 		}
 	}
 
-	/// Set is isolated flag.
-	pub fn set_isolated(&self, is_isolated: bool) {
-		self.data.write().is_isolated = is_isolated;
-	}
-
 	/// Add new key server to the set.
 	pub fn add_key_server(&self, id: KeyServerId, address: SocketAddr) {
-		self.data.write().nodes.insert(id, address);
+		let mut data = self.data.write();
+		data.new_set.insert(id, address);
+		if !self.support_migration {
+			data.current_set.insert(id, address);
+		}
+	}
+
+	/// 'Receive' migration signal from other node.
+	pub fn receive_migration_signal(&self, id: MigrationId, master: KeyServerId) {
+		let mut data = self.data.write();
+		data.migration = Some(KeyServerSetMigration {
+			id,
+			set: data.new_set.clone(),
+			master,
+			is_confirmed: false,
+		});
+	}
+
+	/// Complete migration.
+	pub fn complete_migration(&self) {
+		let mut data = self.data.write();
+		data.current_set = data.migration.take().unwrap().set;
 	}
 }
 
@@ -105,23 +129,38 @@ impl KeyServerSet for InMemoryKeyServerSet {
 	type NetworkAddress = SocketAddr;
 
 	fn is_isolated(&self) -> bool {
-		self.data.read().is_isolated
+		self.data.read().current_set.contains_key(&self.self_id)
 	}
 
 	fn snapshot(&self) -> KeyServerSetSnapshot<Self::NetworkAddress> {
 		let data = self.data.read();
 		KeyServerSetSnapshot {
-			current_set: data.nodes.clone(),
-			new_set: data.nodes.clone(),
-			migration: None,
+			current_set: data.current_set.clone(),
+			new_set: data.new_set.clone(),
+			migration: data.migration.clone(),
 		}
 	}
 
-	fn start_migration(&self, _migration_id: MigrationId) {
-		// nothing to do here
+	fn start_migration(&self, migration_id: MigrationId) {
+		debug_assert!(self.support_migration);
+
+		let mut data = self.data.write();
+		debug_assert!(data.migration.is_none());
+		data.migration = Some(KeyServerSetMigration {
+			id: migration_id,
+			set: data.new_set.clone(),
+			master: self.self_id,
+			is_confirmed: false,
+		});
 	}
 
-	fn confirm_migration(&self, _migration_id: MigrationId) {
-		// nothing to do here
+	fn confirm_migration(&self, migration_id: MigrationId) {
+		debug_assert!(self.support_migration);
+
+		let mut data = self.data.write();
+		let migration = data.migration.as_mut().unwrap();
+		debug_assert_eq!(migration.id, migration_id);
+		debug_assert!(migration.set.contains_key(&self.self_id));
+		migration.is_confirmed = true;
 	}
 }

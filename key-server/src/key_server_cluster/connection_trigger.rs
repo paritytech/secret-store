@@ -353,7 +353,7 @@ mod tests {
 */
 	#[test]
 	fn simple_connections_trigger_only_maintains_connections() {
-		let key_server_set = Arc::new(InMemoryKeyServerSet::new(false, Default::default()));
+		let key_server_set = Arc::new(InMemoryKeyServerSet::new(false, Default::default(), Default::default()));
 		let mut trigger = SimpleConnectionTrigger::new(key_server_set, None);
 		assert_eq!(trigger.on_maintain(), Some(Maintain::Connections));
 	}

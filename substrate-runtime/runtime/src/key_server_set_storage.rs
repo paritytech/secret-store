@@ -22,7 +22,7 @@ use sp_std::{
 	marker::PhantomData,
 	vec::Vec,
 };
-use ss_runtime_primitives::{KeyServerId, KeyServersMask, key_server_set::{MigrationId as MigrationIdT, KeyServerNetworkAddress}};
+use primitives::{KeyServerId, KeyServersMask, key_server_set::{MigrationId as MigrationIdT, KeyServerNetworkAddress}};
 use crate::{
 	Trait,
 	Owner, IsInitialized,
@@ -188,7 +188,7 @@ impl<M> Storage for RuntimeStorage<M> where
 	}
 
 	fn contains(&self, id: &KeyServerId) -> bool {
-		M::exists(id)
+		M::contains_key(id)
 	}
 
 	fn append(&mut self, id: KeyServerId, address: KeyServerNetworkAddress) -> Result<(), &'static str> {
@@ -303,7 +303,7 @@ impl<T: Trait> StorageWithMigration for RuntimeStorageWithMigration<T> {
 	}
 
 	fn is_migration_confirmed(&self, id: &KeyServerId) -> bool {
-		MigrationConfirmations::exists(id)
+		MigrationConfirmations::contains_key(id)
 	}
 
 	fn confirm_migration(&mut self, id: &KeyServerId) {

@@ -18,7 +18,7 @@
 
 use frame_system::ensure_signed;
 use frame_support::{traits::{Currency, ExistenceRequirement}, StorageValue, StorageMap, StorageDoubleMap, StorageLinkedMap};
-use ss_runtime_primitives::{KeyServerId, KeyServersMask};
+use primitives::{KeyServerId, KeyServersMask};
 use sp_std::vec::Vec;
 use super::{
 	BalanceOf,

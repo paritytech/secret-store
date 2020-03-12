@@ -19,7 +19,7 @@
 
 use codec::{Encode, Decode};
 use frame_support::{StorageValue, StorageMap, StorageDoubleMap, ensure};
-use ss_runtime_primitives::{EntityId, ServerKeyId, KeyServerId, KeyServersMask};
+use primitives::{EntityId, ServerKeyId, KeyServerId, KeyServersMask};
 use sp_std::vec::Vec;
 use frame_system::ensure_signed;
 use crate::service::{Responses, ResponseSupport, SecretStoreService};
@@ -101,7 +101,7 @@ impl<T: Trait> DocumentKeyShadowRetrievalService<T> {
 
 		// check if there are no pending request for the same key
 		ensure!(
-			!DocumentKeyShadowRetrievalRequests::<T>::exists(retrieval_id),
+			!DocumentKeyShadowRetrievalRequests::<T>::contains_key(retrieval_id),
 			"The same request is already queued",
 		);
 

@@ -29,7 +29,7 @@ use std::sync::Arc;
 use crate::network::tcp::{NetConnectionsManager};
 
 pub use crate::network::{ConnectionProvider, ConnectionManager, Connection};
-pub use crate::types::{ServerKeyId, EncryptedDocumentKey, RequestSignature, Public,
+pub use crate::types::{ServerKeyId, RequestSignature, Public,
 	Error, NodeAddress, ClusterConfiguration};
 pub use crate::key_server::KeyServerImpl;
 pub use crate::traits::KeyServer;

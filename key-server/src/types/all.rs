@@ -20,8 +20,6 @@ use parity_crypto::publickey::Address;
 pub type NodeId = primitives::KeyServerId;
 /// Server key id. When key is used to encrypt document, it could be document contents hash.
 pub type ServerKeyId = ethereum_types::H256;
-/// Encrypted document key type.
-pub type EncryptedDocumentKey = parity_bytes::Bytes;
 /// Request signature type.
 pub type RequestSignature = parity_crypto::publickey::Signature;
 /// Public key type.

@@ -14,489 +14,448 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
+//! The Substrate Node Template runtime. This can be compiled with `#[no_std]`, ready for Wasm.
+
 #![cfg_attr(not(feature = "std"), no_std)]
+// `construct_runtime!` does a lot of recursion and requires us to increase the limit to 256.
+#![recursion_limit="256"]
+
+// Make the WASM binary available.
+#[cfg(feature = "std")]
+include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
 use sp_std::prelude::*;
-
-mod blockchain_storage;
-mod entity_id_storage;
-mod document_key_shadow_retrieval;
-mod document_key_store;
-mod key_server_set;
-mod key_server_set_storage;
-mod mock;
-mod server_key_generation;
-mod server_key_retrieval;
-mod service;
-
-use frame_support::{StorageMap, traits::Currency, decl_module, decl_event, decl_storage, ensure};
-use frame_system::{self as system, ensure_signed};
-use primitives::{
-	EntityId,
-	KeyServerId,
-	ServerKeyId,
-	KeyServersMask,
-	key_server_set::{KeyServerSetSnapshot, KeyServerNetworkAddress, MigrationId as MigrationIdT},
+use sp_core::OpaqueMetadata;
+use sp_runtime::{
+	ApplyExtrinsicResult, transaction_validity::TransactionValidity, generic, create_runtime_str,
+	impl_opaque_keys, MultiSignature,
 };
-use document_key_shadow_retrieval::{
-	DocumentKeyShadowRetrievalRequest,
-	DocumentKeyShadowRetrievalPersonalData,
-	DocumentKeyShadowRetrievalService,
+use sp_runtime::traits::{
+	BlakeTwo256, Block as BlockT, IdentityLookup, Verify, ConvertInto, IdentifyAccount
 };
-use document_key_store::{DocumentKeyStoreRequest, DocumentKeyStoreService};
-use server_key_generation::{ServerKeyGenerationRequest, ServerKeyGenerationService};
-use server_key_retrieval::{ServerKeyRetrievalRequest, ServerKeyRetrievalService};
-use key_server_set_storage::KeyServer;
+use sp_api::impl_runtime_apis;
+use sp_consensus_aura::sr25519::AuthorityId as AuraId;
+use pallet_grandpa::AuthorityList as GrandpaAuthorityList;
+use pallet_grandpa::fg_primitives;
+use sp_version::RuntimeVersion;
+#[cfg(feature = "std")]
+use sp_version::NativeVersion;
 
-pub type BalanceOf<T> = <<T as Trait>::Currency as Currency<<T as frame_system::Trait>::AccountId>>::Balance;
+// A few exports that help ease life for downstream crates.
+#[cfg(any(feature = "std", test))]
+pub use sp_runtime::BuildStorage;
+pub use pallet_timestamp::Call as TimestampCall;
+pub use pallet_balances::Call as BalancesCall;
+pub use sp_runtime::{Permill, Perbill};
+pub use secretstore_runtime_module::Call as SecretStoreCall;
+pub use frame_support::{
+	StorageValue, construct_runtime, parameter_types,
+	traits::Randomness,
+	weights::Weight,
+};
 
-/// The module configuration trait
-pub trait Trait: frame_system::Trait {
-	/// They overarching event type.
-	type Event: From<Event> + Into<<Self as frame_system::Trait>::Event>;
+/// An index to a block.
+pub type BlockNumber = u32;
 
-	/// The currency type used for paying services.
-	type Currency: Currency<Self::AccountId>;
-}
+/// Alias to 512-bit hash when used in the context of a transaction signature on the chain.
+pub type Signature = MultiSignature;
 
-decl_module! {
-	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
-		fn deposit_event() = default;
+/// Some way of identifying an account on the chain. We intentionally make it equivalent
+/// to the public key of our transaction signing scheme.
+pub type AccountId = <<Signature as Verify>::Signer as IdentifyAccount>::AccountId;
 
-		/// Claim given id.
-		pub fn claim_id(origin, id: EntityId) {
-			ensure!(
-				!<ClaimedBy<T>>::contains_key(&id),
-				"Id is already claimed",
-			);
+/// The type for looking up accounts. We don't expect more than 4 billion of them, but you
+/// never know...
+pub type AccountIndex = u32;
 
-			let origin = ensure_signed(origin)?;
-			ensure!(
-				!<ClaimedId<T>>::contains_key(&origin),
-				"Account has already claimed an id",
-			);
+/// Balance of an account.
+pub type Balance = u128;
 
-			<ClaimedBy<T>>::insert(id, origin.clone());
-			<ClaimedId<T>>::insert(origin, id);
+/// Index of a transaction in the chain.
+pub type Index = u32;
+
+/// A hash of some data used by the chain.
+pub type Hash = sp_core::H256;
+
+/// Digest item type.
+pub type DigestItem = generic::DigestItem<Hash>;
+
+/// Opaque types. These are used by the CLI to instantiate machinery that don't need to know
+/// the specifics of the runtime. They can then be made to be agnostic over specific formats
+/// of data like extrinsics, allowing for them to continue syncing the network through upgrades
+/// to even the core data structures.
+pub mod opaque {
+	use super::*;
+
+	pub use sp_runtime::OpaqueExtrinsic as UncheckedExtrinsic;
+
+	/// Opaque block header type.
+	pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
+	/// Opaque block type.
+	pub type Block = generic::Block<Header, UncheckedExtrinsic>;
+	/// Opaque block identifier type.
+	pub type BlockId = generic::BlockId<Block>;
+
+	impl_opaque_keys! {
+		pub struct SessionKeys {
+			pub aura: Aura,
+			pub grandpa: Grandpa,
 		}
-
-/*		/// Change key server set owner.
-		pub fn change_owner(origin, new_owner: T::AccountId) {
-			KeyServerSetWithMigration::<T>::change_owner(origin, new_owner)?;
-		}*/
-
-		/// Complete initialization.
-		pub fn complete_initialization(origin) {
-			key_server_set::<T>().complete_initialization(origin)?;
-		}
-
-		/// Add key server to the set.
-		pub fn add_key_server(origin, id: KeyServerId, network_address: KeyServerNetworkAddress) {
-			key_server_set::<T>().add_key_server(origin, id, network_address)?;
-		}
-
-		/// Update key server in the set.
-		pub fn update_key_server(origin, id: KeyServerId, network_address: KeyServerNetworkAddress) {
-			key_server_set::<T>().update_key_server(origin, id, network_address)?;
-		}
-
-		/// Remove key server from the set.
-		pub fn remove_key_server(origin, id: KeyServerId) {
-			key_server_set::<T>().remove_key_server(origin, id)?;
-		}
-
-		/// Start migration.
-		pub fn start_migration(origin, migration_id: MigrationIdT) {
-			key_server_set::<T>().start_migration(origin, migration_id)?;
-		}
-
-		/// Confirm migration.
-		pub fn confirm_migration(origin, migration_id: MigrationIdT) {
-			key_server_set::<T>().confirm_migration(origin, migration_id)?;
-		}
-
-		/// Generate server key.
-		pub fn generate_server_key(origin, id: ServerKeyId, threshold: u8) {
-			ServerKeyGenerationService::<T>::generate(origin, id, threshold)?;
-		}
-
-		/// Called when generation is reported by key server.
-		pub fn server_key_generated(origin, id: ServerKeyId, server_key_public: sp_core::H512) {
-			ServerKeyGenerationService::<T>::on_generated(origin, id, server_key_public)?;
-		}
-
-		/// Called when generation error is reported by key server.
-		pub fn server_key_generation_error(origin, id: ServerKeyId) {
-			ServerKeyGenerationService::<T>::on_generation_error(origin, id)?;
-		}
-
-		/// Retrieve server key.
-		pub fn retrieve_server_key(origin, id: ServerKeyId) {
-			ServerKeyRetrievalService::<T>::retrieve(origin, id)?;
-		}
-
-		/// Called when generation is reported by key server.
-		pub fn server_key_retrieved(origin, id: ServerKeyId, server_key_public: sp_core::H512, threshold: u8) {
-			ServerKeyRetrievalService::<T>::on_retrieved(origin, id, server_key_public, threshold)?;
-		}
-
-		/// Called when generation error is reported by key server.
-		pub fn server_key_retrieval_error(origin, id: ServerKeyId) {
-			ServerKeyRetrievalService::<T>::on_retrieval_error(origin, id)?;
-		}
-
-		/// Store document key.
-		pub fn store_document_key(origin, id: ServerKeyId, common_point: sp_core::H512, encrypted_point: sp_core::H512) {
-			DocumentKeyStoreService::<T>::store(origin, id, common_point, encrypted_point)?;
-		}
-
-		/// Called when store is reported by key server.
-		pub fn document_key_stored(origin, id: ServerKeyId) {
-			DocumentKeyStoreService::<T>::on_stored(origin, id)?;
-		}
-
-		/// Called when store error is reported by key server.
-		pub fn document_key_store_error(origin, id: ServerKeyId) {
-			DocumentKeyStoreService::<T>::on_store_error(origin, id)?;
-		}
-
-		/// Retrieve document key shadow.
-		pub fn retrieve_document_key_shadow(origin, id: ServerKeyId, requester_public: sp_core::H512) {
-			DocumentKeyShadowRetrievalService::<T>::retrieve(origin, id, requester_public)?;
-		}
-
-		/// Called when document key common part is reported by key server.
-		pub fn document_key_common_retrieved(
-			origin,
-			id: ServerKeyId,
-			requester: EntityId,
-			common_point: sp_core::H512,
-			threshold: u8,
-		) {
-			DocumentKeyShadowRetrievalService::<T>::on_common_retrieved(
-				origin,
-				id,
-				requester,
-				common_point,
-				threshold,
-			)?;
-		}
-		/// Called when document key personal part is reported by key server.
-		pub fn document_key_personal_retrieved(
-			origin,
-			id: ServerKeyId,
-			requester: EntityId,
-			participants: KeyServersMask,
-			decrypted_secret: sp_core::H512,
-			shadow: Vec<u8>,
-		) {
-			DocumentKeyShadowRetrievalService::<T>::on_personal_retrieved(
-				origin,
-				id,
-				requester,
-				participants,
-				decrypted_secret,
-				shadow,
-			)?;
-		}
-
-		/// Called when document key shadow retrieval error is reported by key server.
-		pub fn document_key_shadow_retrieval_error(origin, id: ServerKeyId, requester: EntityId) {
-			DocumentKeyShadowRetrievalService::<T>::on_retrieval_error(origin, id, requester)?;
-		}
-
-
-/*
-		/// Allow key operations for given requester.
-		pub fn grant_key_access(origin, key: ServerKeyId, requester: Address) {
-			let origin = ensure_signed(origin)?;
-			ensure!(
-				<KeyAccessRights<T>>::exists(&key, &origin),
-				"Access to key is denied",
-			);
-
-			<KeyAccessRights<T>>::insert(&key, &requester, &());
-		}
-
-		/// Deny key operations for given requester.
-		pub fn deny_key_access(origin, key: ServerKeyId, requester: Address) {
-			let origin = ensure_signed(origin)?;
-			ensure!(
-				<KeyAccessRights<T>>::exists(&key, &origin),
-				"Access to key is denied",
-			);
-
-			<KeyAccessRights<T>>::remove(&key, &requester, &());
-		}
-
-		/// Set requesters who are allowed to perform operations with given key.
-		pub fn change_key_access(origin, key: ServerKeyId, requesters: Vec<Address>) {
-			let origin = ensure_signed(origin)?;
-			ensure!(
-				<KeyAccessRights<T>>::exists(&key, &origin),
-				"Access to key is denied",
-			);
-
-			<KeyAccessRights<T>>::remove_prefix(&key);
-			requesters.for_each(|requester| <KeyAccessRights<T>>::insert(&key, &requester, &()));
-		}
-*/
 	}
 }
 
-//<T> where <T as frame_system::Trait>::AccountId
-decl_event!(
-	pub enum Event {
-		/// Key server set: key server added to the new set.
-		KeyServerAdded(KeyServerId),
-		/// Key server set: key server added to the new set.
-		KeyServerRemoved(KeyServerId),
-		/// Key server set: key server address has been updated.
-		KeyServerUpdated(KeyServerId),
-		/// Key server set: migration has started.
-		MigrationStarted,
-		/// Key server set: migration has completed.
-		MigrationCompleted,
+/// This runtime version.
+pub const VERSION: RuntimeVersion = RuntimeVersion {
+	spec_name: create_runtime_str!("bridge-node"),
+	impl_name: create_runtime_str!("bridge-node"),
+	authoring_version: 1,
+	spec_version: 1,
+	impl_version: 1,
+	apis: RUNTIME_API_VERSIONS,
+};
 
-		/// 
-		ServerKeyGenerationRequested(ServerKeyId, EntityId, u8),
-		///
-		ServerKeyGenerated(ServerKeyId, sp_core::H512),
-		///
-		ServerKeyGenerationError(ServerKeyId),
+pub const MILLISECS_PER_BLOCK: u64 = 6000;
 
-		/// 
-		ServerKeyRetrievalRequested(ServerKeyId),
-		///
-		ServerKeyRetrieved(ServerKeyId, sp_core::H512),
-		///
-		ServerKeyRetrievalError(ServerKeyId),
+pub const SLOT_DURATION: u64 = MILLISECS_PER_BLOCK;
 
-		///
-		DocumentKeyStoreRequested(ServerKeyId, EntityId, sp_core::H512, sp_core::H512),
-		///
-		DocumentKeyStored(ServerKeyId),
-		///
-		DocumentKeyStoreError(ServerKeyId),
+// These time units are defined in number of blocks.
+pub const MINUTES: BlockNumber = 60_000 / (MILLISECS_PER_BLOCK as BlockNumber);
+pub const HOURS: BlockNumber = MINUTES * 60;
+pub const DAYS: BlockNumber = HOURS * 24;
 
-		/// TODO: needs to be verified by the key server
-		DocumentKeyShadowRetrievalRequested(ServerKeyId, EntityId),
-		///
-		DocumentKeyCommonRetrieved(ServerKeyId, EntityId, sp_core::H512, u8),
-		///
-		DocumentKeyPersonalRetrievalRequested(ServerKeyId, sp_core::H512),
-		///
-		DocumentKeyShadowRetrievalError(ServerKeyId, EntityId),
-		///
-		DocumentKeyPersonalRetrieved(ServerKeyId, EntityId, sp_core::H512, Vec<u8>),
+/// The version information used to identify this runtime when compiled natively.
+#[cfg(feature = "std")]
+pub fn native_version() -> NativeVersion {
+	NativeVersion {
+		runtime_version: VERSION,
+		can_author_with: Default::default(),
+	}
+}
+
+parameter_types! {
+	pub const BlockHashCount: BlockNumber = 250;
+	pub const MaximumBlockWeight: Weight = 1_000_000;
+	pub const AvailableBlockRatio: Perbill = Perbill::from_percent(75);
+	pub const MaximumBlockLength: u32 = 5 * 1024 * 1024;
+	pub const Version: RuntimeVersion = VERSION;
+}
+
+impl frame_system::Trait for Runtime {
+	/// The identifier used to distinguish between accounts.
+	type AccountId = AccountId;
+	/// The aggregated dispatch type that is available for extrinsics.
+	type Call = Call;
+	/// The lookup mechanism to get account ID from whatever is passed in dispatchers.
+	type Lookup = IdentityLookup<AccountId>;
+	/// The index type for storing how many extrinsics an account has signed.
+	type Index = Index;
+	/// The index type for blocks.
+	type BlockNumber = BlockNumber;
+	/// The type for hashing blocks and tries.
+	type Hash = Hash;
+	/// The hashing algorithm used.
+	type Hashing = BlakeTwo256;
+	/// The header type.
+	type Header = generic::Header<BlockNumber, BlakeTwo256>;
+	/// The ubiquitous event type.
+	type Event = Event;
+	/// The ubiquitous origin type.
+	type Origin = Origin;
+	/// Maximum number of block number to block hash mappings to keep (oldest pruned first).
+	type BlockHashCount = BlockHashCount;
+	/// Maximum weight of each block.
+	type MaximumBlockWeight = MaximumBlockWeight;
+	/// Maximum size of all encoded transactions (in bytes) that are allowed in one block.
+	type MaximumBlockLength = MaximumBlockLength;
+	/// Portion of the block weight that is available to all normal transactions.
+	type AvailableBlockRatio = AvailableBlockRatio;
+	/// Version of the runtime.
+	type Version = Version;
+	/// Converts a module to the index of the module in `construct_runtime!`.
+	///
+	/// This type is being generated by `construct_runtime!`.
+	type ModuleToIndex = ModuleToIndex;
+	/// What to do if a new account is created.
+	type OnNewAccount = ();
+	/// What to do if an account is fully reaped from the system.
+	type OnKilledAccount = ();
+	/// The data to be stored in an account.
+	type AccountData = pallet_balances::AccountData<Balance>;
+}
+
+impl pallet_aura::Trait for Runtime {
+	type AuthorityId = AuraId;
+}
+
+impl pallet_grandpa::Trait for Runtime {
+	type Event = Event;
+}
+
+parameter_types! {
+	pub const MinimumPeriod: u64 = SLOT_DURATION / 2;
+}
+
+impl pallet_timestamp::Trait for Runtime {
+	/// A timestamp: milliseconds since the unix epoch.
+	type Moment = u64;
+	type OnTimestampSet = Aura;
+	type MinimumPeriod = MinimumPeriod;
+}
+
+parameter_types! {
+	pub const ExistentialDeposit: u128 = 500;
+}
+
+impl pallet_balances::Trait for Runtime {
+	/// The type for recording an account's balance.
+	type Balance = Balance;
+	/// The ubiquitous event type.
+	type Event = Event;
+	type DustRemoval = ();
+	type ExistentialDeposit = ExistentialDeposit;
+	type AccountStore = System;
+}
+
+parameter_types! {
+	pub const TransactionBaseFee: Balance = 0;
+	pub const TransactionByteFee: Balance = 1;
+}
+
+impl pallet_transaction_payment::Trait for Runtime {
+	type Currency = pallet_balances::Module<Runtime>;
+	type OnTransactionPayment = ();
+	type TransactionBaseFee = TransactionBaseFee;
+	type TransactionByteFee = TransactionByteFee;
+	type WeightToFee = ConvertInto;
+	type FeeMultiplierUpdate = ();
+}
+
+impl pallet_sudo::Trait for Runtime {
+	type Event = Event;
+	type Call = Call;
+}
+
+impl secretstore_runtime_module::Trait for Runtime {
+	type Event = Event;
+	type Currency = Balances;
+}
+
+construct_runtime!(
+	pub enum Runtime where
+		Block = Block,
+		NodeBlock = opaque::Block,
+		UncheckedExtrinsic = UncheckedExtrinsic
+	{
+		System: frame_system::{Module, Call, Config, Storage, Event<T>},
+		RandomnessCollectiveFlip: pallet_randomness_collective_flip::{Module, Call, Storage},
+		Timestamp: pallet_timestamp::{Module, Call, Storage, Inherent},
+		Aura: pallet_aura::{Module, Config<T>, Inherent(Timestamp)},
+		Grandpa: pallet_grandpa::{Module, Call, Storage, Config, Event},
+		Balances: pallet_balances::{Module, Call, Storage, Config<T>, Event<T>},
+		TransactionPayment: pallet_transaction_payment::{Module, Storage},
+		Sudo: pallet_sudo::{Module, Call, Config<T>, Storage, Event<T>},
+		SecretStore: secretstore_runtime_module::{Module, Call, Event, Config<T>},
 	}
 );
 
-decl_storage! {
-	trait Store for Module<T: Trait> as SecretStore {
-		pub Owner get(owner) config(): T::AccountId;
-		ClaimedId get(claimed_address): map hasher(blake2_256) T::AccountId => Option<EntityId>;
-		ClaimedBy get(claimed_by): map hasher(blake2_256) EntityId => Option<T::AccountId>;
+/// The address format for describing accounts.
+pub type Address = AccountId;
+/// Block header type as expected by this runtime.
+pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
+/// Block type as expected by this runtime.
+pub type Block = generic::Block<Header, UncheckedExtrinsic>;
+/// A Block signed with a Justification
+pub type SignedBlock = generic::SignedBlock<Block>;
+/// BlockId type as expected by this runtime.
+pub type BlockId = generic::BlockId<Block>;
+/// The SignedExtension to the basic transaction logic.
+pub type SignedExtra = (
+	frame_system::CheckVersion<Runtime>,
+	frame_system::CheckGenesis<Runtime>,
+	frame_system::CheckEra<Runtime>,
+	frame_system::CheckNonce<Runtime>,
+	frame_system::CheckWeight<Runtime>,
+	pallet_transaction_payment::ChargeTransactionPayment<Runtime>
+);
+/// Unchecked extrinsic type as expected by this runtime.
+pub type UncheckedExtrinsic = generic::UncheckedExtrinsic<Address, Call, Signature, SignedExtra>;
+/// Extrinsic type that has already been checked.
+pub type CheckedExtrinsic = generic::CheckedExtrinsic<AccountId, Call, SignedExtra>;
+/// Executive: handles dispatch to the various modules.
+pub type Executive = frame_executive::Executive<Runtime, Block, frame_system::ChainContext<Runtime>, Runtime, AllModules>;
 
-		IsInitialized: bool;
-		CurrentSetChangeBlock: <T as frame_system::Trait>::BlockNumber;
+impl_runtime_apis! {
+	impl sp_api::Core<Block> for Runtime {
+		fn version() -> RuntimeVersion {
+			VERSION
+		}
 
-		CurrentKeyServers: linked_map hasher(blake2_256) KeyServerId => Option<KeyServer>;
-		MigrationKeyServers: linked_map hasher(blake2_256) KeyServerId => Option<KeyServer>;
-		NewKeyServers: linked_map hasher(blake2_256) KeyServerId => Option<KeyServer>;
-		MigrationId: Option<(MigrationIdT, KeyServerId)>;
-		MigrationConfirmations: map hasher(blake2_256) KeyServerId => ();
+		fn execute_block(block: Block) {
+			Executive::execute_block(block)
+		}
 
-		pub ServerKeyGenerationFee get(server_key_generation_fee) config(): BalanceOf<T>;
-		ServerKeyGenerationRequestsKeys: Vec<ServerKeyId>;
-		ServerKeyGenerationRequests: map hasher(blake2_256) ServerKeyId
-			=> Option<ServerKeyGenerationRequest<<T as frame_system::Trait>::BlockNumber>>;
-		ServerKeyGenerationResponses: double_map
-			hasher(blake2_256) ServerKeyId,
-			hasher(twox_128) sp_core::H512 => u8;
-
-		pub ServerKeyRetrievalFee get(server_key_retrieval_fee) config(): BalanceOf<T>;
-		ServerKeyRetrievalRequestsKeys: Vec<ServerKeyId>;
-		ServerKeyRetrievalRequests: map hasher(blake2_256) ServerKeyId
-			=> Option<ServerKeyRetrievalRequest<<T as frame_system::Trait>::BlockNumber>>;
-		ServerKeyRetrievalResponses: double_map
-			hasher(blake2_256) ServerKeyId,
-			hasher(twox_128) sp_core::H512 => u8;
-		ServerKeyRetrievalThresholdResponses: double_map
-			hasher(blake2_256) ServerKeyId,
-			hasher(twox_128) u8 => u8;
-
-		pub DocumentKeyStoreFee get(document_key_store_fee) config(): BalanceOf<T>;
-		DocumentKeyStoreRequestsKeys: Vec<ServerKeyId>;
-		DocumentKeyStoreRequests: map hasher(blake2_256) ServerKeyId
-			=> Option<DocumentKeyStoreRequest<<T as frame_system::Trait>::BlockNumber>>;
-		DocumentKeyStoreResponses: double_map
-			hasher(blake2_256) ServerKeyId,
-			hasher(twox_128) () => u8;
-
-		pub DocumentKeyShadowRetrievalFee get(document_key_shadow_retrieval_fee) config(): BalanceOf<T>;
-		DocumentKeyShadowRetrievalRequestsKeys: Vec<(ServerKeyId, EntityId)>;
-		DocumentKeyShadowRetrievalRequests: map hasher(blake2_256) (ServerKeyId, EntityId)
-			=> Option<DocumentKeyShadowRetrievalRequest<<T as frame_system::Trait>::BlockNumber>>;
-		DocumentKeyShadowRetrievalCommonResponses: double_map
-			hasher(blake2_256) (ServerKeyId, EntityId),
-			hasher(twox_128) (sp_core::H512, u8) => u8;
-		DocumentKeyShadowRetrievalPersonalResponses: double_map
-			hasher(blake2_256) (ServerKeyId, EntityId),
-			hasher(twox_128) (KeyServersMask, sp_core::H512) => DocumentKeyShadowRetrievalPersonalData;
+		fn initialize_block(header: &<Block as BlockT>::Header) {
+			Executive::initialize_block(header)
+		}
 	}
-	add_extra_genesis {
-		config(is_initialization_completed): bool;
-		config(key_servers): Vec<(KeyServerId, KeyServerNetworkAddress)>;
-		config(claims): Vec<(T::AccountId, EntityId)>;
-		build(|config| {
-			key_server_set::<T>()
-				.fill(
-					&config.key_servers,
-					config.is_initialization_completed,
-				).expect("invalid key servers set in configuration");
 
-			let mut claimed_by_accounts = std::collections::BTreeSet::new();
-			let mut claimed_entities = std::collections::BTreeSet::new();
-			for (account_id, entity_id) in &config.claims {
-				if !claimed_by_accounts.insert(account_id.clone()) {
-					panic!("Account has already claimed EntityId");
-				}
-				if !claimed_entities.insert(*entity_id) {
-					panic!("EntityId already claimed");
-				}
+	impl sp_api::Metadata<Block> for Runtime {
+		fn metadata() -> OpaqueMetadata {
+			Runtime::metadata().into()
+		}
+	}
 
-				ClaimedId::<T>::insert(account_id.clone(), *entity_id);
-				ClaimedBy::<T>::insert(*entity_id, account_id.clone());
+	impl sp_block_builder::BlockBuilder<Block> for Runtime {
+		fn apply_extrinsic(extrinsic: <Block as BlockT>::Extrinsic) -> ApplyExtrinsicResult {
+			Executive::apply_extrinsic(extrinsic)
+		}
+
+		fn apply_trusted_extrinsic(extrinsic: <Block as BlockT>::Extrinsic) -> ApplyExtrinsicResult {
+			Executive::apply_trusted_extrinsic(extrinsic)
+		}
+
+		fn finalize_block() -> <Block as BlockT>::Header {
+			Executive::finalize_block()
+		}
+
+		fn inherent_extrinsics(data: sp_inherents::InherentData) -> Vec<<Block as BlockT>::Extrinsic> {
+			data.create_extrinsics()
+		}
+
+		fn check_inherents(
+			block: Block,
+			data: sp_inherents::InherentData,
+		) -> sp_inherents::CheckInherentsResult {
+			data.check_extrinsics(&block)
+		}
+
+		fn random_seed() -> <Block as BlockT>::Hash {
+			RandomnessCollectiveFlip::random_seed()
+		}
+	}
+
+	impl sp_transaction_pool::runtime_api::TaggedTransactionQueue<Block> for Runtime {
+		fn validate_transaction(tx: <Block as BlockT>::Extrinsic) -> TransactionValidity {
+			Executive::validate_transaction(tx)
+		}
+	}
+
+	impl sp_offchain::OffchainWorkerApi<Block> for Runtime {
+		fn offchain_worker(header: &<Block as BlockT>::Header) {
+			Executive::offchain_worker(header)
+		}
+	}
+
+	impl sp_consensus_aura::AuraApi<Block, AuraId> for Runtime {
+		fn slot_duration() -> u64 {
+			Aura::slot_duration()
+		}
+
+		fn authorities() -> Vec<AuraId> {
+			Aura::authorities()
+		}
+	}
+
+	impl sp_session::SessionKeys<Block> for Runtime {
+		fn generate_session_keys(seed: Option<Vec<u8>>) -> Vec<u8> {
+			opaque::SessionKeys::generate(seed)
+		}
+
+		fn decode_session_keys(
+			encoded: Vec<u8>,
+		) -> Option<Vec<(Vec<u8>, sp_core::crypto::KeyTypeId)>> {
+			opaque::SessionKeys::decode_into_raw_public_keys(&encoded)
+		}
+	}
+
+	impl fg_primitives::GrandpaApi<Block> for Runtime {
+		fn grandpa_authorities() -> GrandpaAuthorityList {
+			Grandpa::grandpa_authorities()
+		}
+	}
+
+	impl secretstore_runtime_primitives::acl_storage::SecretStoreAclApi<Block> for Runtime {
+		fn check(
+			_requester: secretstore_runtime_primitives::EntityId,
+			key: secretstore_runtime_primitives::ServerKeyId,
+		) -> bool {
+			// TODO: change to real impl
+			if key.as_ref()[31] % 2 == 0 {
+				true
+			} else {
+				false
 			}
-		})
-	}
-}
-
-impl<T: Trait> Module<T> {
-	/// Get snapshot of key servers set state.
-	pub fn key_server_set_snapshot(key_server: KeyServerId) -> KeyServerSetSnapshot {
-		key_server_set::<T>().snapshot(key_server)
+		}
 	}
 
-	/// Get current key servers with indices.
-	pub fn key_server_set_with_indices() -> Vec<(KeyServerId, u8)> {
-		key_server_set::<T>().current_set_with_indices()
+	impl secretstore_runtime_primitives::key_server_set::SecretStoreKeyServerSetApi<Block> for Runtime {
+		fn snapshot(
+			key_server: secretstore_runtime_primitives::KeyServerId,
+		) -> secretstore_runtime_primitives::key_server_set::KeyServerSetSnapshot {
+			SecretStore::key_server_set_snapshot(key_server)
+		}
+
+		fn current_set_with_indices() -> Vec<(secretstore_runtime_primitives::KeyServerId, u8)> {
+			SecretStore::key_server_set_with_indices()
+		}
 	}
 
-	///
-	pub fn server_key_generation_tasks(begin: u32, end: u32) -> Vec<primitives::service::ServiceTask> {
-		ServerKeyGenerationRequestsKeys::get()
-			.into_iter()
-			.skip(begin as usize)
-			.take(end.saturating_sub(begin) as usize)
-			.map(|key_id| {
-				let request = ServerKeyGenerationRequests::<T>::get(&key_id)
-					.expect("every key from ServerKeyGenerationRequestsKeys has corresponding
-						entry in ServerKeyGenerationRequests; qed");
-				primitives::service::ServiceTask::GenerateServerKey(
-					key_id,
-					request.author,
-					request.threshold,
-				)
-			})
-			.collect()
-	}
+	impl secretstore_runtime_primitives::service::SecretStoreServiceApi<Block> for Runtime {
+		fn server_key_generation_tasks(
+			begin: u32,
+			end: u32,
+		) -> Vec<secretstore_runtime_primitives::service::ServiceTask> {
+			SecretStore::server_key_generation_tasks(begin, end)
+		}
 
-	///
-	pub fn is_server_key_generation_response_required(key_server: KeyServerId, key_id: ServerKeyId) -> bool {
-		ServerKeyGenerationService::<T>::is_response_required(key_server, key_id)
-	}
+		fn is_server_key_generation_response_required(
+			key_server: secretstore_runtime_primitives::KeyServerId,
+			key_id: secretstore_runtime_primitives::ServerKeyId,
+		) -> bool {
+			SecretStore::is_server_key_generation_response_required(key_server, key_id)
+		}
 
-	///
-	pub fn server_key_retrieval_tasks(begin: u32, end: u32) -> Vec<primitives::service::ServiceTask> {
-		ServerKeyRetrievalRequestsKeys::get()
-			.into_iter()
-			.skip(begin as usize)
-			.take(end.saturating_sub(begin) as usize)
-			.map(|key_id| {
-				primitives::service::ServiceTask::RetrieveServerKey(
-					key_id,
-				)
-			})
-			.collect()
-	}
+		fn server_key_retrieval_tasks(
+			begin: u32,
+			end: u32,
+		) -> Vec<secretstore_runtime_primitives::service::ServiceTask> {
+			SecretStore::server_key_retrieval_tasks(begin, end)
+		}
 
-	///
-	pub fn is_server_key_retrieval_response_required(key_server: KeyServerId, key_id: ServerKeyId) -> bool {
-		ServerKeyRetrievalService::<T>::is_response_required(key_server, key_id)
-	}
+		fn is_server_key_retrieval_response_required(
+			key_server: secretstore_runtime_primitives::KeyServerId,
+			key_id: secretstore_runtime_primitives::ServerKeyId,
+		) -> bool {
+			SecretStore::is_server_key_retrieval_response_required(key_server, key_id)
+		}
 
-	///
-	pub fn document_key_store_tasks(begin: u32, end: u32) -> Vec<primitives::service::ServiceTask> {
-		DocumentKeyStoreRequestsKeys::get()
-			.into_iter()
-			.skip(begin as usize)
-			.take(end.saturating_sub(begin) as usize)
-			.map(|key_id| {
-				let request = DocumentKeyStoreRequests::<T>::get(&key_id)
-					.expect("every key from DocumentKeyStoreRequestsKeys has corresponding
-						entry in DocumentKeyStoreRequests; qed");
-				primitives::service::ServiceTask::StoreDocumentKey(
-					key_id,
-					request.author,
-					request.common_point,
-					request.encrypted_point,
-				)
-			})
-			.collect()
-	}
+		fn document_key_store_tasks(
+			begin: u32,
+			end: u32,
+		) -> Vec<secretstore_runtime_primitives::service::ServiceTask> {
+			SecretStore::document_key_store_tasks(begin, end)
+		}
 
-	///
-	pub fn is_document_key_store_response_required(key_server: KeyServerId, key_id: ServerKeyId) -> bool {
-		DocumentKeyStoreService::<T>::is_response_required(key_server, key_id)
-	}
+		fn is_document_key_store_response_required(
+			key_server: secretstore_runtime_primitives::KeyServerId,
+			key_id: secretstore_runtime_primitives::ServerKeyId,
+		) -> bool {
+			SecretStore::is_document_key_store_response_required(key_server, key_id)
+		}
 
-	///
-	pub fn document_key_shadow_retrieval_tasks(begin: u32, end: u32) -> Vec<primitives::service::ServiceTask> {
-		DocumentKeyShadowRetrievalRequestsKeys::get()
-			.into_iter()
-			.skip(begin as usize)
-			.take(end.saturating_sub(begin) as usize)
-			.map(|(key_id, requester)| {
-				let request = DocumentKeyShadowRetrievalRequests::<T>::get(&(key_id, requester))
-					.expect("every key from DocumentKeyStoreRequestsKeys has corresponding
-						entry in DocumentKeyStoreRequests; qed");
-				match request.threshold.is_some() {
-					true => primitives::service::ServiceTask::RetrieveShadowDocumentKeyCommon(
-						key_id,
-						requester,
-					),
-					false => primitives::service::ServiceTask::RetrieveShadowDocumentKeyPersonal(
-						key_id,
-						request.requester_public,
-					),
-				}
-			})
-			.collect()
-	}
+		fn document_key_shadow_retrieval_tasks(
+			begin: u32,
+			end: u32,
+		) -> Vec<secretstore_runtime_primitives::service::ServiceTask> {
+			SecretStore::document_key_shadow_retrieval_tasks(begin, end)
+		}
 
-	///
-	pub fn is_document_key_shadow_retrieval_response_required(key_server: KeyServerId, key_id: ServerKeyId, requester: EntityId) -> bool {
-		DocumentKeyShadowRetrievalService::<T>::is_response_required(key_server, key_id, requester)
-	}
-}
-
-
-pub(crate) type KeyServerSet<T> = key_server_set::KeyServerSetWithMigration<
-	blockchain_storage::RuntimeStorage<T>,
-	entity_id_storage::RuntimeStorage<T>,
-	key_server_set_storage::RuntimeStorageWithMigration<T>,
->;
-
-pub(crate) fn key_server_set<T: Trait>() -> KeyServerSet<T> {
-	key_server_set::KeyServerSetWithMigration::with_storage(Default::default(), Default::default(), Default::default())
-}
-
-pub fn resolve_entity_id<T: Trait>(origin: &T::AccountId) -> Result<EntityId, &'static str> {
-	let origin_id = ClaimedId::<T>::get(origin);
-	match origin_id {
-		Some(id) => Ok(id),
-		None => Err("No associated id for this account"),
+		fn is_document_key_shadow_retrieval_response_required(
+			key_server: secretstore_runtime_primitives::KeyServerId,
+			key_id: secretstore_runtime_primitives::ServerKeyId,
+			requester: secretstore_runtime_primitives::EntityId,
+		) -> bool {
+			SecretStore::is_document_key_shadow_retrieval_response_required(key_server, key_id, requester)
+		}
 	}
 }

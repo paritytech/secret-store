@@ -1,35 +1,65 @@
 [package]
-name = "parity-secretstore-substrate-runtime-module"
+name = "parity-secretstore-substrate-runtime"
 version = "1.0.0"
 authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
 [dependencies]
 codec = { package = "parity-scale-codec", version = "1.0.0", default-features = false }
+serde = { version = "1.0.101", optional = true, features = ["derive"] }
+frame-executive = { version = "2.0.0-alpha.3", default-features = false }
 frame-support = { version = "2.0.0-alpha.3", default-features = false }
 frame-system = { version = "2.0.0-alpha.3", default-features = false }
+pallet-aura = { version = "2.0.0-alpha.3", default-features = false }
 pallet-balances = { version = "2.0.0-alpha.3", default-features = false }
-primitives = { package = "parity-secretstore-substrate-runtime-primitives", path = "../primitives", default-features = false }
-serde = { version = "1.0", optional = true }
+pallet-grandpa = { version = "2.0.0-alpha.3", default-features = false }
+pallet-randomness-collective-flip = { version = "2.0.0-alpha.3", default-features = false }
+pallet-sudo = { version = "2.0.0-alpha.3", default-features = false }
+pallet-timestamp = { version = "2.0.0-alpha.3", default-features = false }
+pallet-transaction-payment = { version = "2.0.0-alpha.3", default-features = false }
+sp-consensus-aura = { version = "0.8.0-alpha.3", default-features = false }
+sp-api = { version = "2.0.0-alpha.3", default-features = false }
+sp-block-builder = { version = "2.0.0-alpha.3", default-features = false }
 sp-core = { version = "2.0.0-alpha.3", default-features = false }
-sp-io = { version = "2.0.0-alpha.3", default-features = false }
+sp-inherents = { version = "2.0.0-alpha.3", default-features = false }
+sp-offchain = { version = "2.0.0-alpha.3", default-features = false }
+sp-session = { version = "2.0.0-alpha.3", default-features = false }
+sp-transaction-pool = { version = "2.0.0-alpha.3", default-features = false }
 sp-runtime = { version = "2.0.0-alpha.3", default-features = false }
 sp-std = { version = "2.0.0-alpha.3", default-features = false }
+sp-version = { version = "2.0.0-alpha.3", default-features = false }
+secretstore-runtime-module = { package = "parity-secretstore-substrate-runtime-module", path = "../module", default-features = false }
+secretstore-runtime-primitives = { package = "parity-secretstore-substrate-runtime-primitives", path = "../primitives", default-features = false }
 
-[dev-dependencies]
-parity-crypto = { version = "0.5", features = ["publickey"] }
+[build-dependencies]
+wasm-builder-runner = { package = "substrate-wasm-builder-runner", version = "1.0.5" }
 
 [features]
 default = ["std"]
 std = [
 	"codec/std",
+	"serde",
+	"frame-executive/std",
 	"frame-support/std",
 	"frame-system/std",
+	"pallet-aura/std",
 	"pallet-balances/std",
-	"primitives/std",
-	"serde",
+	"pallet-grandpa/std",
+	"pallet-randomness-collective-flip/std",
+	"pallet-sudo/std",
+	"pallet-timestamp/std",
+	"pallet-transaction-payment/std",
+	"sp-api/std",
+	"sp-block-builder/std",
+	"sp-consensus-aura/std",
 	"sp-core/std",
-	"sp-io/std",
+	"sp-inherents/std",
+	"sp-offchain/std",
+	"sp-session/std",
+	"sp-transaction-pool/std",
 	"sp-runtime/std",
 	"sp-std/std",
+	"sp-version/std",
+	"secretstore-runtime-module/std",
+	"secretstore-runtime-primitives/std",
 ]

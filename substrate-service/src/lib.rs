@@ -16,11 +16,13 @@
 
 use std::{
 	collections::{BTreeSet, VecDeque},
+	future::Future,
 	ops::Range,
+	pin::Pin,
 	sync::Arc,
 };
-use futures::{FutureExt, Stream, StreamExt};
-use log::error;
+use futures::{FutureExt, Stream, StreamExt, future::ready};
+use log::{error, trace};
 use primitives::{
 	Address, KeyServerId, Public, ServerKeyId,
 	error::Error,
@@ -82,26 +84,28 @@ pub trait Blockchain: 'static + Send + Sync {
 	/// Block hash type.
 	type BlockHash: Clone + Send + Sync;
 	/// Blockchain event type.
-	type Event: MaybeSecretStoreEvent;
-	/// Block events iterator type.
-	type BlockEvents: IntoIterator<Item = Self::Event>;
-	/// Pending events iterator type.
-	type PendingEvents: IntoIterator<Item = Self::Event>;
+	type Event: MaybeSecretStoreEvent + Send;
+	/// Block events stream type.
+	type BlockEventsStream: Stream<Item = Self::Event> + Send;
+	/// Future that results in pending tasks iterator.
+	type PendingEventsStream: Stream<Item = Self::Event> + Send;
+	/// Future that results in current key servers set.
+	type CurrentKeyServersSetFuture: Future<Output = BTreeSet<KeyServerId>> + Send;
 
 	/// Get block events.
-	fn block_events(&self, block_hash: Self::BlockHash) -> Self::BlockEvents;
+	fn block_events(&self, block_hash: Self::BlockHash) -> Self::BlockEventsStream;
 	/// Get current key servers set. This should return current key servers set at the best
 	/// known (finalized) block. That's because we use this to determine key server which
 	/// will should start corresponding session AND the session starts at the time when
 	/// current set should have been read from the best block.
-	fn current_key_servers_set(&self) -> BTreeSet<KeyServerId>;
+	fn current_key_servers_set(&self) -> Self::CurrentKeyServersSetFuture;
 
 	/// Get pending server key generation tasks range at given block.
 	fn server_key_generation_tasks(
 		&self,
 		block_hash: Self::BlockHash,
 		range: Range<usize>,
-	) -> Result<Self::PendingEvents, String>;
+	) -> Result<Self::PendingEventsStream, String>;
 	/// Is server key generation request response required?
 	fn is_server_key_generation_response_required(
 		&self,
@@ -114,7 +118,7 @@ pub trait Blockchain: 'static + Send + Sync {
 		&self,
 		block_hash: Self::BlockHash,
 		range: Range<usize>,
-	) -> Result<Self::PendingEvents, String>;
+	) -> Result<Self::PendingEventsStream, String>;
 	/// Is server key retrieval request response required?
 	fn is_server_key_retrieval_response_required(
 		&self,
@@ -127,7 +131,7 @@ pub trait Blockchain: 'static + Send + Sync {
 		&self,
 		block_hash: Self::BlockHash,
 		range: Range<usize>,
-	) -> Result<Self::PendingEvents, String>;
+	) -> Result<Self::PendingEventsStream, String>;
 	/// Is document key store request response required?
 	fn is_document_key_store_response_required(
 		&self,
@@ -140,7 +144,7 @@ pub trait Blockchain: 'static + Send + Sync {
 		&self,
 		block_hash: Self::BlockHash,
 		range: Range<usize>,
-	) -> Result<Self::PendingEvents, String>;
+	) -> Result<Self::PendingEventsStream, String>;
 	/// Is document key shadow retrieval request response required?
 	fn is_document_key_shadow_retrieval_response_required(
 		&self,
@@ -154,9 +158,11 @@ pub trait Blockchain: 'static + Send + Sync {
 pub trait TransactionPool: Send + Sync + 'static {
 	/// Transaction hash.
 	type TransactionHash: std::fmt::Display;
+	/// Future that results in submitted transaction hash.
+	type SubmitTransactionFuture: Future<Output = Result<Self::TransactionHash, String>> + Send;
 
 	/// Submit transaction to the pool.
-	fn submit_transaction(&self, call: SecretStoreCall) -> Result<Self::TransactionHash, String>;
+	fn submit_transaction(&self, call: SecretStoreCall) -> Self::SubmitTransactionFuture;
 }
 
 /// Substrate block passed to the blockchain service.
@@ -186,9 +192,9 @@ pub fn start_service<B, E, TP, KSrv, KStr>(
 	KSrv: KeyServer,
 	KStr: KeyStorage,
 {
-//	let config = Arc::new(config);
 	let key_server_address = config.self_id;
 	let transaction_pool = Arc::new(SubstrateTransactionPool::new(
+		executor.clone(),
 		blockchain.clone(),
 		transaction_pool,
 		key_server_address.clone(),
@@ -208,7 +214,7 @@ pub fn start_service<B, E, TP, KSrv, KStr>(
 			})
 	);
 	executor.spawn(new_blocks_future
-		.map(|err| error!(
+		.map(|err| trace!(
 			target: "secretstore",
 			"Blockhain service future failed: {:?}",
 			err,
@@ -219,117 +225,105 @@ pub fn start_service<B, E, TP, KSrv, KStr>(
 }
 
 impl<B: Blockchain> blockchain_service::Block for SubstrateBlock<B> {
-	type NewBlocksIterator = Box<dyn Iterator<Item = BlockchainServiceTask>>;
-	type PendingBlocksIterator = Box<dyn Iterator<Item = BlockchainServiceTask>>;
+	type NewTasksStream = Pin<Box<dyn Stream<Item = BlockchainServiceTask> + Send>>;
+	type PendingTasksStream = Pin<Box<dyn Stream<Item = BlockchainServiceTask> + Send>>;
+	type CurrentKeyServersSetFuture = Pin<Box<dyn Future<Output = BTreeSet<KeyServerId>> + Send>>;
 
-	fn new_tasks(&self) -> Self::NewBlocksIterator {
-		Box::new(
-			self.blockchain
-				.block_events(self.block_hash.clone())
-				.into_iter()
-				.filter_map(MaybeSecretStoreEvent::as_secret_store_event)
-		)
+	fn new_tasks(&self) -> Self::NewTasksStream {
+		self.blockchain
+			.block_events(self.block_hash.clone())
+			.filter_map(|evt| ready(MaybeSecretStoreEvent::as_secret_store_event(evt)))
+			.boxed()
 	}
 
-	fn pending_tasks(&self) -> Self::PendingBlocksIterator {
-		let (blockchain, block_hash) = (self.blockchain.clone(), self.block_hash.clone());
-		let server_key_generation_tasks = move |tasks: &mut VecDeque<BlockchainServiceTask>, range|
-			Ok(tasks.extend(
-				blockchain
-					.server_key_generation_tasks(block_hash.clone(), range)?
-					.into_iter()
-					.filter_map(MaybeSecretStoreEvent::as_secret_store_event)
-			));
-		let (blockchain, block_hash) = (self.blockchain.clone(), self.block_hash.clone());
-		let server_key_retrieval_tasks = move |tasks: &mut VecDeque<BlockchainServiceTask>, range|
-			Ok(tasks.extend(
-				blockchain
-					.server_key_retrieval_tasks(block_hash.clone(), range)?
-					.into_iter()
-					.filter_map(MaybeSecretStoreEvent::as_secret_store_event)
-			));
-		let (blockchain, block_hash) = (self.blockchain.clone(), self.block_hash.clone());
-		let document_key_store_tasks = move |tasks: &mut VecDeque<BlockchainServiceTask>, range|
-			Ok(tasks.extend(
-				blockchain
-					.document_key_store_tasks(block_hash.clone(), range)?
-					.into_iter()
-					.filter_map(MaybeSecretStoreEvent::as_secret_store_event)
-			));
-		let (blockchain, block_hash) = (self.blockchain.clone(), self.block_hash.clone());
-		let document_key_shadow_retrieval_tasks = move |tasks: &mut VecDeque<BlockchainServiceTask>, range|
-			Ok(tasks.extend(
-				blockchain
-					.document_key_shadow_retrieval_tasks(block_hash.clone(), range)?
-					.into_iter()
-					.filter_map(MaybeSecretStoreEvent::as_secret_store_event)
-			));
-
-		Box::new(
-			PendingTasksIterator {
-				pending: VecDeque::new(),
-				range: 0..std::usize::MAX,
-				get_pending_tasks: server_key_generation_tasks,
-			}.chain(PendingTasksIterator {
-				pending: VecDeque::new(),
-				range: 0..std::usize::MAX,
-				get_pending_tasks: server_key_retrieval_tasks,
-			}).chain(PendingTasksIterator {
-				pending: VecDeque::new(),
-				range: 0..std::usize::MAX,
-				get_pending_tasks: document_key_store_tasks,
-			}).chain(PendingTasksIterator {
-				pending: VecDeque::new(),
-				range: 0..std::usize::MAX,
-				get_pending_tasks: document_key_shadow_retrieval_tasks,
-			})
-		)
+	fn pending_tasks(&self) -> Self::PendingTasksStream {
+		pending_tasks_stream(
+			self.blockchain.clone(),
+			self.block_hash.clone(),
+			|blockchain, block_hash, range| blockchain.server_key_generation_tasks(
+				block_hash,
+				range,
+			),
+		).chain(pending_tasks_stream(
+			self.blockchain.clone(),
+			self.block_hash.clone(),
+			|blockchain, block_hash, range| blockchain.server_key_retrieval_tasks(
+				block_hash,
+				range,
+			),
+		)).chain(pending_tasks_stream(
+			self.blockchain.clone(),
+			self.block_hash.clone(),
+			|blockchain, block_hash, range| blockchain.document_key_store_tasks(
+				block_hash,
+				range,
+			),
+		)).chain(pending_tasks_stream(
+			self.blockchain.clone(),
+			self.block_hash.clone(),
+			|blockchain, block_hash, range| blockchain.document_key_shadow_retrieval_tasks(
+				block_hash,
+				range,
+			),
+		)).boxed()
 	}
 
-	fn current_key_servers_set(&self) -> BTreeSet<KeyServerId> {
-		self.blockchain.current_key_servers_set()
+	fn current_key_servers_set(&self) -> Self::CurrentKeyServersSetFuture {
+		self.blockchain.current_key_servers_set().boxed()
 	}
 }
 
-struct PendingTasksIterator<F> {
-	pending: VecDeque<BlockchainServiceTask>,
-	range: Range<usize>,
-	get_pending_tasks: F,
-}
+/// Returns pending tasks stream.
+fn pending_tasks_stream<B: Blockchain, S: Stream<Item = B::Event> + Send>(
+	blockchain: Arc<B>,
+	block_hash: B::BlockHash,
+	get_pending_tasks: impl Fn(Arc<B>, B::BlockHash, Range<usize>) -> Result<S, String> + Send + 'static,
+) -> impl Stream<Item = BlockchainServiceTask> + Send {
+	const PENDING_RANGE_LENGTH: usize = 16;
 
-impl<F> Iterator for PendingTasksIterator<F>
-	where
-		F: Fn(&mut VecDeque<BlockchainServiceTask>, Range<usize>) -> Result<(), String>,
-{
-	type Item = BlockchainServiceTask;
+	futures::stream::unfold(
+		(blockchain, block_hash, get_pending_tasks, VecDeque::new(), 0..std::usize::MAX),
+		|(blockchain, block_hash, get_pending_tasks, mut pending, mut range)| async move {
+			loop {
+				if let Some(pending_task) = pending.pop_front() {
+					return Some((pending_task, (blockchain, block_hash, get_pending_tasks, pending, range)));
+				}
 
-	fn next(&mut self) -> Option<Self::Item> {
-		const PENDING_RANGE_LENGTH: usize = 16;
+				if range.start == range.end {
+					return None;
+				}
 
-		loop {
-			if let Some(pending_task) = self.pending.pop_front() {
-				return Some(pending_task);
-			}
-
-			if self.range.start == self.range.end {
-				return None;
-			}
-
-			let next_range_start = self.range.start + PENDING_RANGE_LENGTH;
-			let pending_range = self.range.start..next_range_start;
-			if let Err(error) = (self.get_pending_tasks)(&mut self.pending, pending_range) {
-				error!(
-					target: "secretstore",
-					"Failed to read pending tasks: {}",
-					error,
+				let next_range_start = range.start + PENDING_RANGE_LENGTH;
+				let pending_range = range.start..next_range_start;
+				let pending_tasks_result = get_pending_tasks(
+					blockchain.clone(),
+					block_hash.clone(),
+					pending_range,
 				);
-			}
+				match pending_tasks_result {
+					Ok(pending_tasks) => {
+						pending = pending_tasks
+							.filter_map(|event| ready(MaybeSecretStoreEvent::as_secret_store_event(event)))
+							.collect()
+							.await;
+					},
+					Err(error) => {
+						error!(
+							target: "secretstore",
+							"Failed to read pending tasks: {}",
+							error,
+						);
 
-			if self.pending.len() == PENDING_RANGE_LENGTH {
-				self.range = next_range_start..self.range.end;
-			} else {
-				self.range = self.range.end..self.range.end;
+						return None;
+					}
+				}
+
+				if pending.len() == PENDING_RANGE_LENGTH {
+					range = next_range_start..range.end;
+				} else {
+					range = range.end..range.end;
+				}
 			}
-		}
-	}
+		},
+	)
 }

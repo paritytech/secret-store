@@ -15,9 +15,11 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
+use futures::future::{FutureExt, TryFutureExt, ready};
 use log::{error, trace};
 use primitives::{
 	Address, ServerKeyId,
+	executor::Executor,
 	key_server::{
 		ServerKeyGenerationArtifacts, ServerKeyRetrievalArtifacts,
 		DocumentKeyCommonRetrievalArtifacts, DocumentKeyShadowRetrievalArtifacts,
@@ -29,7 +31,9 @@ use crate::{
 };
 
 /// Substrate transction pool.
-pub struct SubstrateTransactionPool<B, P> {
+pub struct SubstrateTransactionPool<E, B, P> {
+	/// Futures executor.
+	executor: Arc<E>,
 	/// Shared blockchain reference.
 	blockchain: Arc<B>,
 	/// Shared reference to actual transaction pool.
@@ -38,18 +42,21 @@ pub struct SubstrateTransactionPool<B, P> {
 	key_server_address: Address,
 }
 
-impl<B, P> SubstrateTransactionPool<B, P>
+impl<E, B, P> SubstrateTransactionPool<E, B, P>
 	where
+		E: Executor,
 		B: Blockchain,
 		P: TransactionPool,
 {
 	/// Create new transaction pool.
 	pub fn new(
+		executor: Arc<E>,
 		blockchain: Arc<B>,
 		transaction_pool: Arc<P>,
 		key_server_address: Address,
 	) -> Self {
 		SubstrateTransactionPool {
+			executor,
 			blockchain,
 			transaction_pool,
 			key_server_address,
@@ -59,7 +66,7 @@ impl<B, P> SubstrateTransactionPool<B, P>
 	/// Send response transaction if required.
 	fn submit_response_transaction(
 		&self,
-		format_request: impl Fn() -> String,
+		formatted_request: String,
 		is_response_required: impl FnOnce() -> Result<bool, String>,
 		prepare_response: impl FnOnce() -> Result<SecretStoreCall, String>,
 	) {
@@ -69,46 +76,50 @@ impl<B, P> SubstrateTransactionPool<B, P>
 				trace!(
 					target: "secretstore",
 					"Response {} is not required. Transaction is not submitted.",
-					format_request(),
+					formatted_request,
 				);
 
-				return
+				return;
 			},
-			Err(error) => error!(
-				target: "secretstore",
-				"Failed to check if response {} is required: {}",
-				format_request(),
-				error,
-			),
+			Err(error) => {
+				error!(
+					target: "secretstore",
+					"Failed to check if response {} is required: {}",
+					formatted_request,
+					error,
+				);
+
+				return;
+			},
 		}
 
-		let submit_result = prepare_response()
-			.and_then(|transaction| self
-				.transaction_pool
-				.submit_transaction(transaction)
-			);
+		let transaction_pool = self.transaction_pool.clone();
+		let submit_transaction_future = ready(prepare_response())
+			.and_then(move |transaction| transaction_pool.submit_transaction(transaction))
+			.map(move |submit_result| match submit_result {
+				Ok(transaction_hash) => trace!(
+					target: "secretstore",
+					"Submitted response {}: {}",
+					formatted_request,
+					transaction_hash,
+				),
+				Err(error) => error!(
+					target: "secretstore",
+					"Failed to submit response {}: {}",
+					formatted_request,
+					error,
+				),
+			});
 
-		match submit_result {
-			Ok(transaction_hash) => trace!(
-				target: "secretstore",
-				"Submitted response {}: {}",
-				format_request(),
-				transaction_hash,
-			),
-			Err(error) => error!(
-				target: "secretstore",
-				"Failed to submit response {}: {}",
-				format_request(),
-				error,
-			),
-		}
+		self.executor.spawn(submit_transaction_future.boxed());
 	}
 }
 
-impl<B, P> blockchain_service::TransactionPool
+impl<E, B, P> blockchain_service::TransactionPool
 	for
-		SubstrateTransactionPool<B, P>
+		SubstrateTransactionPool<E, B, P>
 	where
+		E: Executor,
 		B: Blockchain,
 		P: TransactionPool,
 {
@@ -119,7 +130,7 @@ impl<B, P> blockchain_service::TransactionPool
 		artifacts: ServerKeyGenerationArtifacts,
 	) {
 		self.submit_response_transaction(
-			|| format!("ServerKeyGenerationSuccess({})", key_id),
+			format!("ServerKeyGenerationSuccess({})", key_id),
 			|| self.blockchain.is_server_key_generation_response_required(key_id, self.key_server_address),
 			|| Ok(SecretStoreCall::ServerKeyGenerated(key_id, artifacts.key)),
 		)
@@ -127,7 +138,7 @@ impl<B, P> blockchain_service::TransactionPool
 
 	fn publish_server_key_generation_error(&self, _origin: Address, key_id: ServerKeyId) {
 		self.submit_response_transaction(
-			|| format!("ServerKeyGenerationFailure({})", key_id),
+			format!("ServerKeyGenerationFailure({})", key_id),
 			|| self.blockchain.is_server_key_generation_response_required(key_id, self.key_server_address),
 			|| Ok(SecretStoreCall::ServerKeyGenerationError(key_id)),
 		)
@@ -140,7 +151,7 @@ impl<B, P> blockchain_service::TransactionPool
 		artifacts: ServerKeyRetrievalArtifacts,
 	) {
 		self.submit_response_transaction(
-			|| format!("ServerKeyRetrievalSuccess({})", key_id),
+			format!("ServerKeyRetrievalSuccess({})", key_id),
 			|| self.blockchain.is_server_key_retrieval_response_required(key_id, self.key_server_address),
 			|| serialize_threshold(artifacts.threshold)
 				.map(|threshold| SecretStoreCall::ServerKeyRetrieved(key_id, artifacts.key, threshold)),
@@ -149,7 +160,7 @@ impl<B, P> blockchain_service::TransactionPool
 
 	fn publish_server_key_retrieval_error(&self, _origin: Address, key_id: ServerKeyId) {
 		self.submit_response_transaction(
-			|| format!("ServerKeyRetrievalFailure({})", key_id),
+			format!("ServerKeyRetrievalFailure({})", key_id),
 			|| self.blockchain.is_server_key_retrieval_response_required(key_id, self.key_server_address),
 			|| Ok(SecretStoreCall::ServerKeyRetrievalError(key_id)),
 		)
@@ -157,7 +168,7 @@ impl<B, P> blockchain_service::TransactionPool
 
 	fn publish_stored_document_key(&self, _origin: Address, key_id: ServerKeyId) {
 		self.submit_response_transaction(
-			|| format!("DocumentKeyStoreSuccess({})", key_id),
+			format!("DocumentKeyStoreSuccess({})", key_id),
 			|| self.blockchain.is_document_key_store_response_required(key_id, self.key_server_address),
 			|| Ok(SecretStoreCall::DocumentKeyStored(key_id)),
 		)
@@ -165,7 +176,7 @@ impl<B, P> blockchain_service::TransactionPool
 
 	fn publish_document_key_store_error(&self, _origin: Address, key_id: ServerKeyId) {
 		self.submit_response_transaction(
-			|| format!("DocumentKeyStoreFailure({})", key_id),
+			format!("DocumentKeyStoreFailure({})", key_id),
 			|| self.blockchain.is_document_key_store_response_required(key_id, self.key_server_address),
 			|| Ok(SecretStoreCall::DocumentKeyStoreError(key_id)),
 		)
@@ -179,7 +190,7 @@ impl<B, P> blockchain_service::TransactionPool
 		artifacts: DocumentKeyCommonRetrievalArtifacts,
 	) {
 		self.submit_response_transaction(
-			|| format!("DocumentKeyCommonRetrievalSuccess({}, {})", key_id, requester),
+			format!("DocumentKeyCommonRetrievalSuccess({}, {})", key_id, requester),
 			|| requester
 				.address(&key_id)
 				.map_err(Into::into)
@@ -214,7 +225,7 @@ impl<B, P> blockchain_service::TransactionPool
 		requester: Requester,
 	) {
 		self.submit_response_transaction(
-			|| format!("DocumentKeyCommonRetrievalFailure({}, {})", key_id, requester),
+			format!("DocumentKeyCommonRetrievalFailure({}, {})", key_id, requester),
 			|| requester
 				.address(&key_id)
 				.map_err(Into::into)
@@ -244,7 +255,7 @@ impl<B, P> blockchain_service::TransactionPool
 		artifacts: DocumentKeyShadowRetrievalArtifacts,
 	) {
 		self.submit_response_transaction(
-			|| format!("DocumentKeyPersonalRetrievalSuccess({}, {})", key_id, requester),
+			format!("DocumentKeyPersonalRetrievalSuccess({}, {})", key_id, requester),
 			|| requester
 				.address(&key_id)
 				.map_err(Into::into)
@@ -286,7 +297,7 @@ impl<B, P> blockchain_service::TransactionPool
 		requester: Requester,
 	) {
 		self.submit_response_transaction(
-			|| format!("DocumentKeyPersonalRetrievalFailure({}, {})", key_id, requester),
+			format!("DocumentKeyPersonalRetrievalFailure({}, {})", key_id, requester),
 			|| requester
 				.address(&key_id)
 				.map_err(Into::into)

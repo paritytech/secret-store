@@ -14,10 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::{BTreeSet, HashSet};
-use std::future::Future;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+	collections::{BTreeSet, HashSet},
+	future::Future,
+	sync::Arc,
+	time::{Duration, Instant},
+};
 use futures::{future::{ready, Either}, FutureExt, Stream, StreamExt};
 use log::{error, warn};
 use parking_lot::RwLock;
@@ -54,17 +56,19 @@ pub enum BlockchainServiceTask {
 
 /// Block API.
 pub trait Block: Send + Sync {
-	/// New blocks iterator.
-	type NewBlocksIterator: IntoIterator<Item = BlockchainServiceTask>;
-	/// Pending tasks iterator.
-	type PendingBlocksIterator: IntoIterator<Item = BlockchainServiceTask>;
+	/// Stream that returns new tasks of this block.
+	type NewTasksStream: Stream<Item = BlockchainServiceTask> + Send;
+	/// Stream that returns pending tasks.
+	type PendingTasksStream: Stream<Item = BlockchainServiceTask> + Send;
+	/// Future that results in current key servers set.
+	type CurrentKeyServersSetFuture: Future<Output = BTreeSet<KeyServerId>> + Send;
 
 	/// Get all new service tasks from this block.
-	fn new_tasks(&self) -> Self::NewBlocksIterator;
-	/// Get all pending service tasks at this block.
-	fn pending_tasks(&self) -> Self::PendingBlocksIterator;
+	fn new_tasks(&self) -> Self::NewTasksStream;
+	/// Get all pending service tasks at this block. Iterator must be lazy.
+	fn pending_tasks(&self) -> Self::PendingTasksStream;
 	/// Returns current key server set at this block.
-	fn current_key_servers_set(&self) -> BTreeSet<KeyServerId>;
+	fn current_key_servers_set(&self) -> Self::CurrentKeyServersSetFuture;
 }
 
 /// Transaction pool API.
@@ -99,7 +103,7 @@ pub trait TransactionPool: Send + Sync + 'static {
 		requester: Requester,
 		artifacts: DocumentKeyCommonRetrievalArtifacts,
 	);
-	/// Publish common part of document key retrieval error.
+	/// Publish error that has occured during retrieval of common part of document key.
 	fn publish_document_key_common_retrieval_error(
 		&self,
 		origin: Origin,
@@ -114,7 +118,7 @@ pub trait TransactionPool: Send + Sync + 'static {
 		requester: Requester,
 		artifacts: DocumentKeyShadowRetrievalArtifacts,
 	);
-	///
+	/// Publish error that has occured during retrieval of personal part of document key.
 	fn publish_document_key_personal_retrieval_error(
 		&self,
 		origin: Origin,
@@ -236,6 +240,7 @@ async fn start_service_with_service_data<B, E, TP, KSrv, KStr>(
 	KSrv: KeyServer,
 	KStr: KeyStorage,
 {
+	let config = Arc::new(config);
 	let environment = Arc::new(Environment {
 		self_id: config.self_id,
 		executor,
@@ -249,103 +254,114 @@ async fn start_service_with_service_data<B, E, TP, KSrv, KStr>(
 	}));
 
 	new_blocks_stream
-		.for_each(|block| {
-			// we do not want to overload Secret Store, so let's limit number of possible active sessions
-			let future_service_data = service_data.clone();
-			let mut service_data = service_data.write();
-			let num_active_sessions = service_data.active_sessions();
-			let mut max_additional_sessions = config
-				.max_active_sessions
-				.unwrap_or(std::usize::MAX)
-				.checked_sub(num_active_sessions)
-				.unwrap_or(0);
-
-			// we need to know current key servers set to distribute tasks among nodes
-			let current_set = block.current_key_servers_set();
-
-			// if we are not a part of key server set, ignore all tasks
-			if !current_set.contains(&environment.self_id) {
-				return ready(());
-			}
-
-			// first, process new tasks
-			max_additional_sessions -= process_tasks(
-				&environment,
-				&future_service_data,
-				&current_set,
-				block.new_tasks().into_iter().take(max_additional_sessions),
-				&mut service_data,
-			);
-
-			// if enough time has passed since last tasks restart, let's start them now
-			if let Some(pending_restart_interval) = config.pending_restart_interval {
-				let last_restart_time = service_data.last_restart_time;
-				let duration_since_last_restart = Instant::now() - last_restart_time;
-				if duration_since_last_restart > pending_restart_interval {
-					process_tasks(
-						&environment,
-						&future_service_data,
-						&current_set,
-						block.pending_tasks().into_iter().take(max_additional_sessions),
-						&mut service_data,
-					);
-
-					service_data.last_restart_time = Instant::now();
-					service_data.recent_server_key_generation_sessions.clear();
-					service_data.recent_server_key_retrieval_sessions.clear();
-					service_data.recent_document_key_store_sessions.clear();
-					service_data.recent_document_key_common_retrieval_sessions.clear();
-					service_data.recent_document_key_personal_retrieval_sessions.clear();
-				}
-			}
-
-			ready(())
-		})
+		.for_each(|block| process_new_block(
+			block,
+			config.clone(),
+			environment.clone(),
+			service_data.clone(),
+		))
 		.await;
 
 	Ok(())
 }
 
-/// Process multiple service tasks.
-fn process_tasks<E, TP, KSrv, KStr>(
-	future_environment: &Arc<Environment<E, TP, KSrv, KStr>>,
-	future_service_data: &Arc<RwLock<ServiceData>>,
-	current_set: &BTreeSet<KeyServerId>,
-	new_tasks: impl Iterator<Item = BlockchainServiceTask>,
-	service_data: &mut ServiceData,
-) -> usize where
-	E: Executor,
-	TP: TransactionPool,
-	KSrv: KeyServer,
-	KStr: KeyStorage,
+/// Process new block.
+async fn process_new_block<B, E, TP, KSrv, KStr>(
+	block: B,
+	config: Arc<Configuration>,
+	environment: Arc<Environment<E, TP, KSrv, KStr>>,
+	service_data: Arc<RwLock<ServiceData>>,
+)
+	where
+		B: Block,
+		E: Executor,
+		TP: TransactionPool,
+		KSrv: KeyServer,
+		KStr: KeyStorage,
 {
-	let mut added_tasks = 0;
-	for new_task in new_tasks {
+	// we need to know current key servers set to distribute tasks among nodes
+	let current_set = block.current_key_servers_set().await;
+
+	// if we are not a part of key server set, ignore all tasks
+	if !current_set.contains(&environment.self_id) {
+		return;
+	}
+
+	// first, process new tasks
+	let max_active_sessions = config.max_active_sessions.unwrap_or(std::usize::MAX);
+	process_tasks(
+		max_active_sessions,
+		&environment,
+		&service_data,
+		&current_set,
+		block.new_tasks(),
+	).await;
+
+	// if enough time has passed since last tasks restart, let's start them now
+	if let Some(pending_restart_interval) = config.pending_restart_interval {
+		let restart_required = {
+			let last_restart_time = service_data.read().last_restart_time;
+			let duration_since_last_restart = Instant::now() - last_restart_time;
+			duration_since_last_restart > pending_restart_interval
+		};
+		
+		if restart_required {
+			process_tasks(
+				max_active_sessions,
+				&environment,
+				&service_data,
+				&current_set,
+				block.pending_tasks(),
+			).await;
+
+			let mut service_data = service_data.write();
+			service_data.last_restart_time = Instant::now();
+			service_data.recent_server_key_generation_sessions.clear();
+			service_data.recent_server_key_retrieval_sessions.clear();
+			service_data.recent_document_key_store_sessions.clear();
+			service_data.recent_document_key_common_retrieval_sessions.clear();
+			service_data.recent_document_key_personal_retrieval_sessions.clear();
+		}
+	}
+}
+
+/// Process multiple service tasks.
+async fn process_tasks<E, TP, KSrv, KStr>(
+	max_active_sessions: usize,
+	environment: &Arc<Environment<E, TP, KSrv, KStr>>,
+	service_data: &Arc<RwLock<ServiceData>>,
+	current_set: &BTreeSet<KeyServerId>,
+	new_tasks: impl Stream<Item = BlockchainServiceTask>,
+)
+	where
+		E: Executor,
+		TP: TransactionPool,
+		KSrv: KeyServer,
+		KStr: KeyStorage,
+{
+	futures::pin_mut!(new_tasks);
+	for new_task in new_tasks.next().await {
 		let filtered_task = process_task(
-			future_environment,
-			future_service_data,
+			max_active_sessions,
+			environment,
+			service_data,
 			current_set,
 			new_task,
-			service_data,
 		);
 
 		if let Some(filtered_task) = filtered_task {
-			future_environment.executor.spawn(filtered_task.boxed());
+			environment.executor.spawn(filtered_task.boxed());
 		}
-
-		added_tasks += 1;
 	}
-
-	added_tasks
 }
 
 /// Process single service task.
 fn process_task<E, TP, KSrv, KStr>(
-	future_environment: &Arc<Environment<E, TP, KSrv, KStr>>,
-	future_service_data: &Arc<RwLock<ServiceData>>,
+	max_active_sessions: usize,
+	environment: &Arc<Environment<E, TP, KSrv, KStr>>,
+	service_data: &Arc<RwLock<ServiceData>>,
 	current_set: &BTreeSet<KeyServerId>,
 	task: BlockchainServiceTask,
-	service_data: &mut ServiceData,
 ) -> Option<impl Future<Output = ()>> where
 	E: Executor,
 	TP: TransactionPool,
@@ -354,18 +370,22 @@ fn process_task<E, TP, KSrv, KStr>(
 {
 	match task {
 		BlockchainServiceTask::Regular(origin, ServiceTask::GenerateServerKey(key_id, requester, threshold)) => {
+			let mut service_data_lock = service_data.write();
+			let locked_service_data = &mut *service_data_lock;
 			if !filter_task(
+				locked_service_data.active_sessions(),
+				max_active_sessions,
 				&current_set,
-				Some(&future_environment.self_id),
+				Some(&environment.self_id),
 				&key_id,
-				Some(&mut service_data.server_key_generation_sessions),
-				&mut service_data.recent_server_key_generation_sessions,
+				Some(&mut locked_service_data.server_key_generation_sessions),
+				&mut locked_service_data.recent_server_key_generation_sessions,
 			) {
 				return None;
 			}
 
-			let future_environment = future_environment.clone();
-			let future_service_data = future_service_data.clone();
+			let future_environment = environment.clone();
+			let future_service_data = service_data.clone();
 			Some(Either::Left(
 				future_environment
 					.key_server
@@ -378,17 +398,21 @@ fn process_task<E, TP, KSrv, KStr>(
 		BlockchainServiceTask::Regular(origin, ServiceTask::RetrieveServerKey(key_id, _requester)) => {
 			// in blockchain services we ignore requesters for RetrieveServerKey requests
 			// (i.e. public portion of server key is available to anyone)
+			let mut service_data_lock = service_data.write();
+			let locked_service_data = &mut *service_data_lock;
 			if !filter_task(
+				locked_service_data.active_sessions(),
+				max_active_sessions,
 				&current_set,
 				None,
 				&key_id,
 				None,
-				&mut service_data.recent_server_key_retrieval_sessions,
+				&mut locked_service_data.recent_server_key_retrieval_sessions,
 			) {
 				return None;
 			}
 
-			let future_environment = future_environment.clone();
+			let future_environment = environment.clone();
 			Some(Either::Right(Either::Left(
 				ready({
 					let key_share = future_environment.key_storage.get(&key_id);
@@ -428,18 +452,22 @@ fn process_task<E, TP, KSrv, KStr>(
 			origin,
 			ServiceTask::StoreDocumentKey(key_id, author, common_point, encrypted_point),
 		) => {
+			let mut service_data_lock = service_data.write();
+			let locked_service_data = &mut *service_data_lock;
 			if !filter_task(
+				locked_service_data.active_sessions(),
+				max_active_sessions,
 				&current_set,
 				None,
 				&key_id,
 				None,
-				&mut service_data.recent_document_key_store_sessions,
+				&mut locked_service_data.recent_document_key_store_sessions,
 			) {
 				return None;
 			}
 
 
-			let future_environment = future_environment.clone();
+			let future_environment = environment.clone();
 			Some(Either::Right(Either::Right(Either::Left(
 				ready({
 					let store_result = future_environment.key_storage.get(&key_id)
@@ -484,19 +512,23 @@ fn process_task<E, TP, KSrv, KStr>(
 			))))
 		},
 		BlockchainServiceTask::RetrieveShadowDocumentKeyCommon(origin, key_id, requester) => {
+			let mut service_data_lock = service_data.write();
+			let locked_service_data = &mut *service_data_lock;
 			if !filter_document_task(
+				locked_service_data.active_sessions(),
+				max_active_sessions,
 				&current_set,
 				None,
 				&key_id,
 				&requester,
-				Some(&mut service_data.document_key_common_retrieval_sessions),
-				&mut service_data.recent_document_key_common_retrieval_sessions,
+				Some(&mut locked_service_data.document_key_common_retrieval_sessions),
+				&mut locked_service_data.recent_document_key_common_retrieval_sessions,
 			) {
 				return None;
 			}
 
-			let future_environment = future_environment.clone();
-			let future_service_data = future_service_data.clone();
+			let future_environment = environment.clone();
+			let future_service_data = service_data.clone();
 			Some(Either::Right(Either::Right(Either::Right(Either::Left(
 				future_environment
 					.key_server
@@ -545,19 +577,23 @@ fn process_task<E, TP, KSrv, KStr>(
 			)))))
 		},
 		BlockchainServiceTask::RetrieveShadowDocumentKeyPersonal(origin, key_id, requester) => {
+			let mut service_data_lock = service_data.write();
+			let locked_service_data = &mut *service_data_lock;
 			if !filter_document_task(
+				locked_service_data.active_sessions(),
+				max_active_sessions,
 				&current_set,
-				Some(&future_environment.self_id),
+				Some(&environment.self_id),
 				&key_id,
 				&requester,
-				Some(&mut service_data.document_key_personal_retrieval_sessions),
-				&mut service_data.recent_document_key_personal_retrieval_sessions,
+				Some(&mut locked_service_data.document_key_personal_retrieval_sessions),
+				&mut locked_service_data.recent_document_key_personal_retrieval_sessions,
 			) {
 				return None;
 			}
 
-			let future_environment = future_environment.clone();
-			let future_service_data = future_service_data.clone();
+			let future_environment = environment.clone();
+			let future_service_data = service_data.clone();
 			Some(Either::Right(Either::Right(Either::Right(Either::Right(
 				future_environment
 					.key_server
@@ -612,12 +648,18 @@ fn log_fatal_secret_store_error(request_type: &str, error: Error) {
 
 /// Returns true when session, related to `server_key_id` could be started now.
 fn filter_task(
+	total_active_sessions: usize,
+	max_active_sessions: usize,
 	current_set: &BTreeSet<KeyServerId>,
 	self_id: Option<&KeyServerId>,
 	server_key_id: &ServerKeyId,
 	active_sessions: Option<&mut HashSet<ServerKeyId>>,
 	recent_sessions: &mut HashSet<ServerKeyId>,
 ) -> bool {
+	// ignore if there's already too many session started by this service
+	if total_active_sessions >= max_active_sessions {
+		return false;
+	}
 	// check if task mus be procesed by another node
 	if let Some(self_id) = self_id {
 		if !is_processed_by_this_key_server(current_set, self_id, server_key_id) {
@@ -640,6 +682,8 @@ fn filter_task(
 
 /// Returns true when session, related to both `server_key_id` and `requester` could be started now.
 fn filter_document_task(
+	total_active_sessions: usize,
+	max_active_sessions: usize,
 	current_set: &BTreeSet<KeyServerId>,
 	self_id: Option<&KeyServerId>,
 	server_key_id: &ServerKeyId,
@@ -647,6 +691,10 @@ fn filter_document_task(
 	active_sessions: Option<&mut HashSet<(ServerKeyId, Requester)>>,
 	recent_sessions: &mut HashSet<(ServerKeyId, Requester)>,
 ) -> bool {
+	// ignore if there's already too many session started by this service
+	if total_active_sessions >= max_active_sessions {
+		return false;
+	}
 	// check if task mus be procesed by another node
 	if let Some(self_id) = self_id {
 		if !is_processed_by_this_key_server(current_set, self_id, server_key_id) {
@@ -673,6 +721,10 @@ fn is_processed_by_this_key_server(
 	self_id: &KeyServerId,
 	server_key_id: &ServerKeyId,
 ) -> bool {
+	if !current_set.contains(self_id) {
+		return false;
+	}
+
 	let total_servers_count = current_set.len();
 	match total_servers_count {
 		0 => return false,
@@ -803,6 +855,7 @@ fn empty_service_data() -> ServiceData {
 
 #[cfg(test)]
 mod tests {
+	use futures::future::Ready;
 	use primitives::{
 		executor::tokio_runtime,
 		key_server::AccumulatingKeyServer,
@@ -873,19 +926,20 @@ mod tests {
 	}
 
 	impl Block for TestBlock {
-		type NewBlocksIterator = Vec<BlockchainServiceTask>;
-		type PendingBlocksIterator = Vec<BlockchainServiceTask>;
+		type NewTasksStream = futures::stream::Iter<std::vec::IntoIter<BlockchainServiceTask>>;
+		type PendingTasksStream = futures::stream::Iter<std::vec::IntoIter<BlockchainServiceTask>>;
+		type CurrentKeyServersSetFuture = Ready<BTreeSet<KeyServerId>>;
 
-		fn new_tasks(&self) -> Self::NewBlocksIterator {
-			self.new_tasks.clone()
+		fn new_tasks(&self) -> Self::NewTasksStream {
+			futures::stream::iter(self.new_tasks.clone())
 		}
 
-		fn pending_tasks(&self) -> Self::PendingBlocksIterator {
-			self.pending_tasks.clone()
+		fn pending_tasks(&self) -> Self::PendingTasksStream {
+			futures::stream::iter(self.pending_tasks.clone())
 		}
 
-		fn current_key_servers_set(&self) -> BTreeSet<KeyServerId> {
-			self.key_servers_set.clone()
+		fn current_key_servers_set(&self) -> Self::CurrentKeyServersSetFuture {
+			ready(self.key_servers_set.clone())
 		}
 	}
 

@@ -16,6 +16,8 @@
 
 use std::{
 	collections::BTreeSet,
+	future::Future,
+	pin::Pin,
 	sync::Arc,
 };
 use futures::{Stream, StreamExt};
@@ -72,23 +74,35 @@ pub enum BlockId {
 
 /// Ethereum blockchain.
 pub trait Blockchain: 'static + Send + Sync {
+	/// Future that returns address of contract at given block.
+	type ContractAddressFuture: Future<Output = Option<Address>> + Send;
+	/// Future that returns logs of contract at given block.
+	type LogsFuture: Future<Output = Vec<RawLog>> + Send;
+	/// Future that returns result of contract call at given block.
+	type ContractCallFuture: Future<Output = Result<Bytes, String>> + Send;
+	/// Future that returns current key servers set.
+	type CurrentKeyServersSetFuture: Future<Output = BTreeSet<KeyServerId>> + Send;
+
 	/// Get address of given contract by its name.
-	fn contract_address(&self, block_id: H256, name: &str) -> Option<Address>;
+	fn contract_address(&self, block_id: H256, name: &str) -> Self::ContractAddressFuture;
 	/// Get logs of given contract at given block.
-	fn contract_logs(&self, block_id: H256, address: Address, topics_filter: &[H256]) -> Vec<RawLog>;
+	fn contract_logs(&self, block_id: H256, address: Address, topics_filter: &[H256]) -> Self::LogsFuture;
 	/// Call contract function with given arguments.
-	fn contract_call(&self, block_id: BlockId, address: Address, data: Bytes) -> Result<Bytes, String>;
+	fn contract_call(&self, block_id: BlockId, address: Address, data: Bytes) -> Self::ContractCallFuture;
 	/// Get current key servers set. This should return current key servers set at the best
 	/// known (finalized) block. That's because we use this to determine key server which
 	/// will should start corresponding session AND the session starts at the time when
 	/// current set should have been read from the best block.
-	fn current_key_servers_set(&self) -> BTreeSet<KeyServerId>;
+	fn current_key_servers_set(&self) -> Self::CurrentKeyServersSetFuture;
 }
 
 /// Transaction pool API.
 pub trait TransactionPool: Send + Sync + 'static {
+	/// Future that results in submitted transaction hash.
+	type SubmitTransactionFuture: Future<Output = Result<H256, String>> + Send;
+
 	/// Submit transaction to the pool.
-	fn submit_transaction(&self, transaction: Bytes) -> Result<H256, String>;
+	fn submit_transaction(&self, transaction: Bytes) -> Self::SubmitTransactionFuture;
 }
 
 /// Contract address.
@@ -128,7 +142,7 @@ struct EthereumBlock<B> {
 	/// This server key address.
 	pub key_server_address: Address,
 	/// Contract address. Some if has been read for this block already.
-	pub cached_contract_address: RwLock<Option<Option<Address>>>,
+	pub cached_contract_address: Arc<RwLock<Option<Option<Address>>>>,
 }
 
 /// Start listening requests from given contract.
@@ -153,6 +167,7 @@ pub async fn start_service<B, E, TP, KSrv, KStr, LR>(
 	let config = Arc::new(config);
 	let key_server_address = config.blockchain_service_config.self_id;
 	let transaction_pool = Arc::new(EthereumTransactionPool::new(
+		executor.clone(),
 		blockchain.clone(),
 		transaction_pool,
 		key_server_address.clone(),
@@ -171,103 +186,125 @@ pub async fn start_service<B, E, TP, KSrv, KStr, LR>(
 				topics_filter: topics_filter.clone(),
 				blockchain: blockchain.clone(),
 				key_server_address: key_server_address.clone(),
-				cached_contract_address: RwLock::new(None),
+				cached_contract_address: Arc::new(RwLock::new(None)),
 			})
 	).await
 }
 
-impl<B: Blockchain> EthereumBlock<B> {
-	/// Read service contract address.
-	fn read_contract_address(&self) -> Option<Address> {
-		if let Some(contract_address) = self.cached_contract_address.read().clone() {
-			return contract_address;
-		}
+impl<B: Blockchain> blockchain_service::Block for EthereumBlock<B> {
+	type NewTasksStream = Pin<Box<dyn Stream<Item = BlockchainServiceTask> + Send>>;
+	type PendingTasksStream = Pin<Box<dyn Stream<Item = BlockchainServiceTask> + Send>>;
+	type CurrentKeyServersSetFuture = B::CurrentKeyServersSetFuture;
 
-		let contract_address = match self.config.contract_address {
-			ContractAddress::Address(contract_address) => Some(contract_address),
-			ContractAddress::Registry(contract_name) =>
-				self.blockchain.contract_address(
-					self.block.hash,
-					contract_name,
-				),
+	fn new_tasks(&self) -> Self::NewTasksStream {
+		let blockchain = self.blockchain.clone();
+		let block_hash = self.block.hash.clone();
+		let topics_filter = self.topics_filter.clone();
+		let config = self.config.clone();
+		let cached_contract_address = self.cached_contract_address.clone();
+		let stream_future = async move {
+			let future_contract_address = read_contract_address(
+				config.clone(),
+				blockchain.clone(),
+				block_hash,
+				cached_contract_address,
+			);
+			let contract_address = match future_contract_address.await {
+				Some(contract_address) => contract_address,
+				None => return futures::stream::empty().boxed(),
+			};
+
+			futures::stream::iter(
+				blockchain
+					.contract_logs(
+						block_hash,
+						contract_address,
+						&*topics_filter,
+					)
+					.await
+					.into_iter()
+					.filter_map(move |log| try_parse_contract_log(
+						&*config,
+						&contract_address,
+						log,
+					))
+			).boxed()
 		};
-		*self.cached_contract_address.write() = Some(contract_address);
-		contract_address
+
+		futures::stream::once(stream_future)
+			.flatten()
+			.boxed()
+	}
+
+	fn pending_tasks(&self) -> Self::PendingTasksStream {
+		let contract_address = read_contract_address(
+			self.config.clone(),
+			self.blockchain.clone(),
+			self.block.hash.clone(),
+			self.cached_contract_address.clone(),
+		);
+
+		let blockchain = self.blockchain.clone();
+		let config = self.config.clone();
+		let block = self.block.hash.clone();
+		let key_server_address = self.key_server_address;
+		futures::stream::once(contract_address)
+			.map(move |contract_address| match contract_address {
+				Some(contract_address) => ServerKeyGenerationService::create_pending_requests_iterator(
+					blockchain.clone(),
+					config.clone(),
+					block.clone(),
+					contract_address,
+					key_server_address,
+				).chain(ServerKeyRetrievalService::create_pending_requests_iterator(
+					blockchain.clone(),
+					config.clone(),
+					block.clone(),
+					contract_address,
+					key_server_address,
+				)).chain(DocumentKeyStoreService::create_pending_requests_iterator(
+					blockchain.clone(),
+					config.clone(),
+					block.clone(),
+					contract_address,
+					key_server_address,
+				)).chain(DocumentKeyShadowRetrievalService::create_pending_requests_iterator(
+					blockchain.clone(),
+					config.clone(),
+					block.clone(),
+					contract_address,
+					key_server_address,
+				)).boxed(),
+				None => futures::stream::empty().boxed(),
+			})
+			.flatten()
+			.boxed()
+	}
+
+	fn current_key_servers_set(&self) -> Self::CurrentKeyServersSetFuture {
+		self.blockchain.current_key_servers_set()
 	}
 }
 
-impl<B: Blockchain> blockchain_service::Block for EthereumBlock<B> {
-	type NewBlocksIterator = Box<dyn Iterator<Item = BlockchainServiceTask>>;
-	type PendingBlocksIterator = Box<dyn Iterator<Item = BlockchainServiceTask>>;
-
-	fn new_tasks(&self) -> Self::NewBlocksIterator {
-		let config = self.config.clone();
-		let contract_address = match self.read_contract_address() {
-			Some(contract_address) => contract_address,
-			None => return Box::new(std::iter::empty()),
-		};
-
-		Box::new(
-			self.blockchain
-				.contract_logs(
-					self.block.hash,
-					contract_address,
-					&*self.topics_filter,
-				)
-				.into_iter()
-				.filter_map(move |log| try_parse_contract_log(
-					&*config,
-					&contract_address,
-					log,
-				))
-		)
+/// Read service contract address.
+async fn read_contract_address<B: Blockchain>(
+	config: Arc<Configuration>,
+	blockchain: Arc<B>,
+	block_hash: H256,
+	cached_contract_address: Arc<RwLock<Option<Option<Address>>>>,
+) -> Option<Address> {
+	if let Some(contract_address) = cached_contract_address.read().clone() {
+		return contract_address;
 	}
 
-	fn pending_tasks(&self) -> Self::PendingBlocksIterator {
-		let contract_address = match self.read_contract_address() {
-			Some(contract_address) => contract_address,
-			None => return Box::new(std::iter::empty()),
-		};
-
-		let block = self.block.hash.clone();
-		let blockchain = self.blockchain.clone();
-		let config = self.config.clone();
-		Box::new(
-			ServerKeyGenerationService::create_pending_requests_iterator(
-				&blockchain,
-				&config,
-				&block,
-				&contract_address,
-				&self.key_server_address,
-			).chain(
-				ServerKeyRetrievalService::create_pending_requests_iterator(
-					&blockchain,
-					&config,
-					&block,
-					&contract_address,
-					&self.key_server_address,
-				)
-			).chain(
-				DocumentKeyStoreService::create_pending_requests_iterator(
-					&blockchain,
-					&config,
-					&block,
-					&contract_address,
-					&self.key_server_address,
-				)
-			).chain(
-				DocumentKeyShadowRetrievalService::create_pending_requests_iterator(
-					&blockchain,
-					&config,
-					&block,
-					&contract_address,
-					&self.key_server_address,
-				)
-			)
-		)
-	}
-
-	fn current_key_servers_set(&self) -> BTreeSet<KeyServerId> {
-		self.blockchain.current_key_servers_set()
-	}
+	let contract_address = match config.contract_address {
+		ContractAddress::Address(contract_address) => Some(contract_address),
+		ContractAddress::Registry(contract_name) =>
+			blockchain.contract_address(
+				block_hash,
+				contract_name,
+			).await,
+	};
+	*cached_contract_address.write() = Some(contract_address);
+	contract_address
 }

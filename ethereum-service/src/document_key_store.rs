@@ -15,6 +15,7 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
+use futures::{Stream, StreamExt};
 use ethabi::{FunctionOutputDecoder, RawLog};
 use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
@@ -71,42 +72,41 @@ impl DocumentKeyStoreService {
 
 	/// Create iterator over pending server key retrieval requests.
 	pub fn create_pending_requests_iterator<B: Blockchain>(
-		blockchain: &Arc<B>,
-		config: &Arc<Configuration>,
-		block: &H256,
-		contract_address: &Address,
-		key_server_address: &Address,
-	) -> impl Iterator<Item=BlockchainServiceTask> {
+		blockchain: Arc<B>,
+		config: Arc<Configuration>,
+		block: H256,
+		contract_address: Address,
+		key_server_address: Address,
+	) -> impl Stream<Item=BlockchainServiceTask> + Send {
 		let iterator = match config.document_key_store_requests {
-			true => Box::new(create_typed_pending_requests_iterator(
-				&blockchain,
-				&block,
-				&contract_address,
-				&key_server_address,
-				&Self::read_pending_requests_count,
-				&Self::read_pending_request,
-			)) as Box<dyn Iterator<Item=BlockchainServiceTask>>,
-			false => Box::new(::std::iter::empty()),
+			true => create_typed_pending_requests_iterator(
+				blockchain,
+				block,
+				contract_address,
+				key_server_address,
+				Self::read_pending_requests_count,
+				Self::read_pending_request,
+			).boxed(),
+			false => futures::stream::empty().boxed(),
 		};
 
 		iterator
 	}
 
 	/// Check if response from key server is required.
-	pub fn is_response_required<B: Blockchain>(
-		blockchain: &B,
-		contract_address: &Address,
-		key_id: &ServerKeyId,
-		key_server_address: &Address,
+	pub async fn is_response_required<B: Blockchain>(
+		blockchain: Arc<B>,
+		contract_address: Address,
+		key_id: ServerKeyId,
+		key_server_address: Address,
 	) -> Result<bool, String> {
 		// we're checking confirmation in Latest block, because we're interested in latest contract state here
 		let (encoded, decoder) = service::functions::is_document_key_store_response_required::call(
-			*key_id,
-			*key_server_address,
+			key_id,
+			key_server_address,
 		);
-		blockchain
-			.contract_call(BlockId::Best, *contract_address, encoded)
-			.and_then(|encoded| decoder.decode(&encoded).map_err(|e| e.to_string()))
+		let call_result = blockchain.contract_call(BlockId::Best, contract_address, encoded).await?;
+		decoder.decode(&call_result).map_err(|e| e.to_string())
 	}
 
 	/// Prepare publish store transaction data.
@@ -122,40 +122,37 @@ impl DocumentKeyStoreService {
 	}
 
 	/// Read pending requests count.
-	fn read_pending_requests_count<B: Blockchain>(
-		blockchain: &B,
-		block: &H256,
-		contract_address: &Address,
+	async fn read_pending_requests_count<B: Blockchain>(
+		blockchain: Arc<B>,
+		block: H256,
+		contract_address: Address,
 	) -> Result<U256, String> {
 		let (encoded, decoder) = service::functions::document_key_store_requests_count::call();
-		decoder
-			.decode(&blockchain.contract_call(BlockId::Hash(*block), *contract_address, encoded)?)
-			.map_err(|e| e.to_string())
+		let call_result = blockchain.contract_call(BlockId::Hash(block), contract_address, encoded).await?;
+		decoder.decode(&call_result).map_err(|e| e.to_string())
 	}
 
 	/// Read pending request.
-	fn read_pending_request<B: Blockchain>(
-		blockchain: &B,
-		block: &H256,
-		key_server_address: &Address,
-		contract_address: &Address,
+	async fn read_pending_request<B: Blockchain>(
+		blockchain: Arc<B>,
+		block: H256,
+		key_server_address: Address,
+		contract_address: Address,
 		index: U256,
 	) -> Result<(bool, BlockchainServiceTask), String> {
 		let (encoded, decoder) = service::functions::get_document_key_store_request::call(index);
-		let (key_id, author, common_point, encrypted_point) = decoder
-			.decode(&blockchain.contract_call(BlockId::Hash(*block), *contract_address, encoded)?)
-			.map_err(|e| e.to_string())?;
+		let call_result = blockchain.contract_call(BlockId::Hash(block), contract_address, encoded).await?;
+		let (key_id, author, common_point, encrypted_point) = decoder.decode(&call_result).map_err(|e| e.to_string())?;
 
 		let (encoded, decoder) = service::functions::is_document_key_store_response_required::call(
 			key_id,
-			*key_server_address,
+			key_server_address,
 		);
-		let not_confirmed = decoder
-			.decode(&blockchain.contract_call(BlockId::Hash(*block), *contract_address, encoded)?)
-			.map_err(|e| e.to_string())?;
+		let call_result = blockchain.contract_call(BlockId::Hash(block), contract_address, encoded).await?;
+		let not_confirmed = decoder.decode(&call_result).map_err(|e| e.to_string())?;
 
 		let task = BlockchainServiceTask::Regular(
-			*contract_address,
+			contract_address,
 			ServiceTask::StoreDocumentKey(
 				key_id,
 				Requester::Address(author),

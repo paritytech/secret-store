@@ -15,6 +15,7 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::Arc;
+use futures::{Stream, StreamExt};
 use ethabi::{FunctionOutputDecoder, RawLog};
 use ethereum_types::{Address, H256, U256};
 use keccak_hash::keccak;
@@ -85,44 +86,41 @@ impl DocumentKeyShadowRetrievalService {
 
 	/// Create iterator over pending document key shadow retrieval requests.
 	pub fn create_pending_requests_iterator<B: Blockchain>(
-		blockchain: &Arc<B>,
-		config: &Arc<Configuration>,
-		block: &H256,
-		contract_address: &Address,
-		key_server_address: &Address,
-	) -> impl Iterator<Item=BlockchainServiceTask> {
-		let iterator = match config.document_key_shadow_retrieval_requests {
-			true => Box::new(create_typed_pending_requests_iterator(
-				&blockchain,
-				&block,
-				&contract_address,
-				&key_server_address,
-				&Self::read_pending_requests_count,
-				&Self::read_pending_request,
-			)) as Box<dyn Iterator<Item=BlockchainServiceTask>>,
-			false => Box::new(::std::iter::empty()),
-		};
-
-		iterator
+		blockchain: Arc<B>,
+		config: Arc<Configuration>,
+		block: H256,
+		contract_address: Address,
+		key_server_address: Address,
+	) -> impl Stream<Item=BlockchainServiceTask> + Send {
+		match config.document_key_shadow_retrieval_requests {
+			true => create_typed_pending_requests_iterator(
+				blockchain,
+				block,
+				contract_address,
+				key_server_address,
+				Self::read_pending_requests_count,
+				Self::read_pending_request,
+			).boxed(),
+			false => futures::stream::empty().boxed(),
+		}
 	}
 
 	/// Check if response from key server is required.
-	pub fn is_response_required<B: Blockchain>(
-		blockchain: &B,
-		contract_address: &Address,
-		key_id: &ServerKeyId,
-		requester: &Address,
-		key_server_address: &Address,
+	pub async fn is_response_required<B: Blockchain>(
+		blockchain: Arc<B>,
+		contract_address: Address,
+		key_id: ServerKeyId,
+		requester: Address,
+		key_server_address: Address,
 	) -> Result<bool, String> {
 		// we're checking confirmation in Latest block, because we're interested in latest contract state here
 		let (encoded, decoder) = service::functions::is_document_key_shadow_retrieval_response_required::call(
-			*key_id,
-			*requester,
-			*key_server_address,
+			key_id,
+			requester,
+			key_server_address,
 		);
-		blockchain
-			.contract_call(BlockId::Best, *contract_address, encoded)
-			.and_then(|encoded| decoder.decode(&encoded).map_err(|e| e.to_string()))
+		let call_result = blockchain.contract_call(BlockId::Best, contract_address, encoded).await?;
+		decoder.decode(&call_result).map_err(|e| e.to_string())
 	}
 
 	/// Prepare publish common key transaction data.
@@ -141,24 +139,25 @@ impl DocumentKeyShadowRetrievalService {
 	}
 
 	/// Prepare publish personal key transaction data.
-	pub fn prepare_pubish_personal_tx_data<B: Blockchain>(
-		blockchain: &B,
-		contract_address: &Address,
-		key_id: &ServerKeyId,
-		requester: &Address,
-		participants: &[Address],
+	pub async fn prepare_pubish_personal_tx_data<B: Blockchain>(
+		blockchain: Arc<B>,
+		contract_address: Address,
+		key_id: ServerKeyId,
+		requester: Address,
+		participants: Vec<Address>,
 		decrypted_secret: Public,
 		shadow: Vec<u8>,
 	) -> Result<Bytes, String> {
 		let mut participants_mask = U256::default();
 		for participant in participants {
-			let participant_index = Self::map_key_server_address(blockchain, contract_address, participant)
+			let participant_index = Self::map_key_server_address(blockchain.clone(), contract_address, participant)
+				.await
 				.map_err(|error| format!("Error searching for {} participant: {}", participant, error))?;
 			participants_mask = participants_mask | (U256::one() << participant_index);
 		}
 		Ok(service::functions::document_key_personal_retrieved::encode_input(
-			*key_id,
-			*requester,
+			key_id,
+			requester,
 			participants_mask,
 			decrypted_secret.as_bytes().to_vec(),
 			shadow,
@@ -174,47 +173,49 @@ impl DocumentKeyShadowRetrievalService {
 	}
 
 	/// Read pending requests count.
-	fn read_pending_requests_count<B: Blockchain>(
-		blockchain: &B,
-		block: &H256,
-		contract_address: &Address,
+	async fn read_pending_requests_count<B: Blockchain>(
+		blockchain: Arc<B>,
+		block: H256,
+		contract_address: Address,
 	) -> Result<U256, String> {
 		let (encoded, decoder) = service::functions::document_key_shadow_retrieval_requests_count::call();
-		decoder.decode(&blockchain.contract_call(BlockId::Hash(*block), *contract_address, encoded)?)
-			.map_err(|e| e.to_string())
+		let call_result = blockchain.contract_call(BlockId::Hash(block), contract_address, encoded).await?;
+		decoder.decode(&call_result).map_err(|e| e.to_string())
 	}
 
 	/// Read pending request.
-	fn read_pending_request<B: Blockchain>(
-		blockchain: &B,
-		block: &H256,
-		key_server_address: &Address,
-		contract_address: &Address,
+	async fn read_pending_request<B: Blockchain>(
+		blockchain: Arc<B>,
+		block: H256,
+		key_server_address: Address,
+		contract_address: Address,
 		index: U256,
 	) -> Result<(bool, BlockchainServiceTask), String> {
 		let (encoded, decoder) = service::functions::get_document_key_shadow_retrieval_request::call(index);
+		let call_result = blockchain.contract_call(BlockId::Hash(block), contract_address, encoded).await?;
 		let (key_id, requester, is_common_retrieval_completed) = decoder
-			.decode(&blockchain.contract_call(BlockId::Hash(*block), *contract_address, encoded)?)
+			.decode(&call_result)
 			.map_err(|e| e.to_string())?;
 
 		let requester = Public::from_slice(&requester);
 		let (encoded, decoder) = service::functions::is_document_key_shadow_retrieval_response_required::call(
 			key_id,
 			public_to_address(&requester),
-			*key_server_address,
+			key_server_address,
 		);
+		let call_result = blockchain.contract_call(BlockId::Hash(block), contract_address, encoded).await?;
 		let not_confirmed = decoder
-			.decode(&blockchain.contract_call(BlockId::Hash(*block), *contract_address, encoded)?)
+			.decode(&call_result)
 			.map_err(|e| e.to_string())?;
 
 		let task = match is_common_retrieval_completed {
 			true => BlockchainServiceTask::RetrieveShadowDocumentKeyPersonal(
-				*contract_address,
+				contract_address,
 				key_id,
 				Requester::Public(requester),
 			),
 			false => BlockchainServiceTask::RetrieveShadowDocumentKeyCommon(
-				*contract_address,
+				contract_address,
 				key_id,
 				Requester::Address(public_to_address(&requester)),
 			),
@@ -224,15 +225,15 @@ impl DocumentKeyShadowRetrievalService {
 	}
 
 	/// Map from key server address to key server index.
-	fn map_key_server_address<B: Blockchain>(
-		blockchain: &B,
-		contract_address: &Address,
-		participant: &Address,
+	async fn map_key_server_address<B: Blockchain>(
+		blockchain: Arc<B>,
+		contract_address: Address,
+		participant: Address,
 	) -> Result<u8, String> {
 		// we're checking confirmation in Latest block, because tx is applied to the latest state
-		let (encoded, decoder) = service::functions::require_key_server::call(*participant);
-		let index = decoder.decode(&blockchain.contract_call(BlockId::Best, *contract_address, encoded)?)
-			.map_err(|e| e.to_string())?;
+		let (encoded, decoder) = service::functions::require_key_server::call(participant);
+		let call_result = blockchain.contract_call(BlockId::Best, contract_address, encoded).await?;
+		let index = decoder.decode(&call_result).map_err(|e| e.to_string())?;
 
 		if index > u8::max_value().into() {
 			Err(format!("Key server index is too big: {}", index))

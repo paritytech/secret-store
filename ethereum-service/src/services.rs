@@ -14,10 +14,14 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::sync::Arc;
+use std::{
+	future::Future,
+	sync::Arc,
+};
 use ethabi::RawLog;
 use ethabi_contract::use_contract;
 use ethereum_types::{Address, H256, U256};
+use futures::{Stream, StreamExt};
 use log::error;
 use crate::{
 	Blockchain, BlockchainServiceTask, Configuration,
@@ -96,24 +100,80 @@ pub fn try_parse_contract_log(
 }
 
 /// Create task-specific pending requests iterator.
-pub fn create_typed_pending_requests_iterator<B: Blockchain>(
-	blockchain: &Arc<B>,
-	block: &H256,
-	contract_address: &Address,
-	key_server_address: &Address,
-	get_count: impl Fn(&B, &H256, &Address) -> Result<U256, String> + 'static,
-	read_item: impl Fn(&B, &H256, &Address, &Address, U256) -> Result<(bool, BlockchainServiceTask), String> + 'static,
-) -> impl Iterator<Item=BlockchainServiceTask>
+pub fn create_typed_pending_requests_iterator<B: Blockchain, GC, RT, GCF, RTF>(
+	blockchain: Arc<B>,
+	block: H256,
+	contract_address: Address,
+	key_server_address: Address,
+	get_count: GC,
+	read_task: RT,
+) -> impl Stream<Item=BlockchainServiceTask> + Send
+	where
+		GC: Fn(Arc<B>, H256, Address) -> GCF,
+		RT: Fn(Arc<B>, H256, Address, Address, U256) -> RTF + Clone + Send + Sync + 'static,
+		GCF: Future<Output = Result<U256, String>> + Send,
+		RTF: Future<Output = Result<(bool, BlockchainServiceTask), String>> + Send + 'static,
 {
-	get_count(&*blockchain, block, contract_address)
-		.map(|count| {
-			let blockchain = blockchain.clone();
-			let block = block.clone();
-			let key_server_address = key_server_address.clone();
-			let contract_address = contract_address.clone();
-			Box::new(PendingRequestsIterator {
-				read_request: move |index| read_item(&blockchain, &block, &key_server_address, &contract_address, index)
-					.map_err(|error| {
+	futures::stream::once(get_count(blockchain.clone(), block, contract_address))
+		.map(move |total_tasks| match total_tasks {
+			Ok(total_tasks) => pending_tasks_stream(
+				blockchain.clone(),
+				block,
+				contract_address,
+				key_server_address,
+				total_tasks,
+				read_task.clone(),
+			).boxed(),
+			Err(error) => {
+				error!(
+					target: "secretstore",
+					"{}: reading pending requests count failed: {}",
+					key_server_address,
+					error,
+				);
+
+				futures::stream::empty().boxed()
+			},
+		})
+		.flatten()
+}
+
+/// Returns pending tasks stream.
+fn pending_tasks_stream<B: Blockchain, F: Future<Output = Result<(bool, BlockchainServiceTask), String>> + Send>(
+	blockchain: Arc<B>,
+	block_hash: H256,
+	contract_address: Address,
+	key_server_address: Address,
+	total_tasks: U256,
+	read_task: impl Fn(Arc<B>, H256, Address, Address, U256) -> F + Send + Sync,
+) -> impl Stream<Item = BlockchainServiceTask> + Send {
+	futures::stream::unfold(
+		(blockchain, block_hash, read_task, U256::zero(), total_tasks),
+		move |(blockchain, block_hash, read_task, index, total_tasks)| async move {
+			loop {
+				if index >= total_tasks {
+					return None;
+				}
+
+				match (read_task)(
+					blockchain.clone(),
+					block_hash,
+					contract_address,
+					key_server_address,
+					index.clone(),
+				).await {
+					Ok((true, task)) => return Some((
+						task,
+						(
+							blockchain,
+							block_hash,
+							read_task,
+							index + U256::one(),
+							total_tasks,
+						),
+					)),
+					Ok((false, _)) => (),
+					Err(error) => {
 						error!(
 							target: "secretstore",
 							"{}: reading pending request failed: {}",
@@ -121,25 +181,14 @@ pub fn create_typed_pending_requests_iterator<B: Blockchain>(
 							error,
 						);
 
-						error
-					})
-					.ok(),
-				index: 0.into(),
-				length: count,
-			}) as Box<dyn Iterator<Item=_>>
-		})
-		.map_err(|error| {
-			error!(
-				target: "secretstore",
-				"{}: creating pending requests iterator failed: {}",
-				key_server_address,
-				error,
-			);
-			error
-		})
-		.ok()
-		.unwrap_or_else(|| Box::new(::std::iter::empty()))
+						return None;
+					},
+				}
+			}
+		},
+	)
 }
+/*
 
 /// Pending requests iterator.
 struct PendingRequestsIterator<F: Fn(U256) -> Option<(bool, BlockchainServiceTask)>> {
@@ -172,7 +221,7 @@ impl<F> Iterator for PendingRequestsIterator<F> where
 			}
 		}
 	}
-}
+}*/
 
 /// Parse threshold (we only support 256 KS at max).
 pub fn parse_threshold(threshold: U256) -> Result<usize, String> {

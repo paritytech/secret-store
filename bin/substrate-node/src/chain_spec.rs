@@ -75,8 +75,12 @@ impl Alternative {
 					vec![
 						get_account_id_from_seed::<sr25519::Public>("Alice"),
 						get_account_id_from_seed::<sr25519::Public>("Bob"),
+						get_account_id_from_seed::<sr25519::Public>("Charlie"),
+						get_account_id_from_seed::<sr25519::Public>("Dave"),
 						get_account_id_from_seed::<sr25519::Public>("Alice//stash"),
 						get_account_id_from_seed::<sr25519::Public>("Bob//stash"),
+						get_account_id_from_seed::<sr25519::Public>("Charlie//stash"),
+						get_account_id_from_seed::<sr25519::Public>("Dave//stash"),
 					],
 					true,
 				),
@@ -97,10 +101,12 @@ impl Alternative {
 	}
 }
 
-fn testnet_genesis(initial_authorities: Vec<(AuraId, GrandpaId)>,
+fn testnet_genesis(
+	initial_authorities: Vec<(AuraId, GrandpaId)>,
 	root_key: AccountId,
 	endowed_accounts: Vec<AccountId>,
-	_enable_println: bool) -> GenesisConfig {
+	_enable_println: bool,
+) -> GenesisConfig {
 	GenesisConfig {
 		frame_system: Some(SystemConfig {
 			code: WASM_BINARY.to_vec(),

@@ -31,12 +31,12 @@ args:
     - sub-host:
         long: sub-host
         value_name: SUB_HOST
-        help: Connect to Substrate node at given host.
+        help: Connect to Substrate node at given host. "localhost" by default.
         takes_value: true
     - sub-port:
         long: sub-port
         value_name: SUB_PORT
-        help: Connect to Substrate node at given port.
+        help: Connect to Substrate node at given port. 9944 by default.
         takes_value: true
     - sub-signer:
         long: sub-signer

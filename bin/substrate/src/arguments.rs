@@ -114,7 +114,7 @@ pub fn parse_arguments<'a>(
 		sub_port: matches.value_of("sub-port")
 			.map(|sub_port| u16::from_str(sub_port).map_err(|err| format!("{}", err)))
 			.or_else(|| toml_arguments.sub_port.clone().map(Ok))
-			.unwrap_or_else(|| Ok(9933))?,
+			.unwrap_or_else(|| Ok(9944))?,
 		sub_signer: matches.value_of("sub-signer")
 			.map(str::to_owned)
 			.or_else(|| toml_arguments.sub_signer.clone())

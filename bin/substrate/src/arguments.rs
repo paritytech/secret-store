@@ -266,7 +266,7 @@ self-secret = "0202020202020202020202020202020202020202020202020202020202020202"
 				net_host: "0.0.0.0".into(),
 				net_port: 8083,
 				sub_host: "localhost".into(),
-				sub_port: 9933,
+				sub_port: 9944,
 				sub_signer: "//Alice".into(),
 				sub_signer_password: None,
 			}),

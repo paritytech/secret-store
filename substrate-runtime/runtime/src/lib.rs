@@ -376,6 +376,12 @@ impl_runtime_apis! {
 		}
 	}
 
+	impl frame_system_rpc_runtime_api::AccountNonceApi<Block, AccountId, Index> for Runtime {
+		fn account_nonce(account: AccountId) -> Index {
+			System::account_nonce(account)
+		}
+	}
+
 	impl secretstore_runtime_primitives::acl_storage::SecretStoreAclApi<Block> for Runtime {
 		fn check(
 			_requester: secretstore_runtime_primitives::EntityId,

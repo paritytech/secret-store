@@ -20,12 +20,11 @@ use std::{
 };
 use futures::Stream;
 use substrate_service::{Configuration, start_service};
-use key_server::KeyServerImpl;
+use key_server::{KeyServerImpl, db_key_storage::PersistentKeyStorage};
 use primitives::{
 	error::Error,
 	executor::TokioHandle,
 	key_server_key_pair::KeyServerKeyPair,
-	key_storage::InMemoryKeyStorage,
 };
 use crate::{
 	blockchain::SecretStoreBlockchain,
@@ -37,7 +36,7 @@ pub fn start(
 	transaction_pool: Arc<SecretStoreTransactionPool>,
 	executor: TokioHandle,
 	key_server: Arc<KeyServerImpl>,
-	key_storage: Arc<InMemoryKeyStorage>,
+	key_storage: Arc<PersistentKeyStorage>,
 	key_server_key_pair: Arc<dyn KeyServerKeyPair>,
 	new_blocks_stream: impl Stream<Item = crate::runtime::BlockHash> + Send + 'static,
 ) -> Result<(), Error> {

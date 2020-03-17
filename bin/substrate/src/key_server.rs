@@ -19,9 +19,8 @@ use primitives::{
 	error::Error,
 	executor::TokioHandle,
 	key_server_key_pair::KeyServerKeyPair,
-	key_storage::InMemoryKeyStorage,
 };
-use key_server::{ClusterConfiguration, KeyServerImpl};
+use key_server::{ClusterConfiguration, KeyServerImpl, db_key_storage::PersistentKeyStorage};
 use crate::{
 	acl_storage::OnChainAclStorage,
 	key_server_set::OnChainKeyServerSet,
@@ -32,10 +31,10 @@ pub fn start(
 	executor: TokioHandle,
 	key_server_key_pair: Arc<dyn KeyServerKeyPair>,
 	listen_port: u16,
+	key_storage: Arc<PersistentKeyStorage>,
 	acl_storage: Arc<OnChainAclStorage>,
 	key_server_set: Arc<OnChainKeyServerSet>,
-) -> Result<(Arc<InMemoryKeyStorage>, Arc<KeyServerImpl>), Error> {
-	let key_storage = Arc::new(InMemoryKeyStorage::default());
+) -> Result<Arc<KeyServerImpl>, Error> {
 	let key_server_config = ClusterConfiguration {
 		admin_address: None,
 		auto_migrate_enabled: true,
@@ -43,7 +42,7 @@ pub fn start(
 	key_server::Builder::new()
 		.with_self_key_pair(key_server_key_pair)
 		.with_acl_storage(acl_storage)
-		.with_key_storage(key_storage.clone())
+		.with_key_storage(key_storage)
 		.with_config(key_server_config)
 		.build_for_tcp(
 			executor,
@@ -53,5 +52,4 @@ pub fn start(
 			},
 			key_server_set,
 		)
-		.map(|key_server| (key_storage, key_server))
 }

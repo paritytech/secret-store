@@ -5,6 +5,7 @@ authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
 [dependencies]
+jsonrpc-core = "14.0.3"
 structopt = "0.3.8"
 sc-basic-authorship = "0.8.0-alpha.3"
 sc-cli = "0.8.0-alpha.3"
@@ -12,6 +13,7 @@ sc-client = "0.8.0-alpha.3"
 sc-consensus-aura = "0.8.0-alpha.3"
 sc-executor = "0.8.0-alpha.3"
 sc-finality-grandpa = "0.8.0-alpha.3"
+sc-rpc = "2.0.0-alpha.3"
 sc-transaction-pool = "2.0.0-alpha.3"
 sc-service = "0.8.0-alpha.3"
 sp-consensus = "0.8.0-alpha.3"
@@ -20,6 +22,7 @@ sp-core = "2.0.0-alpha.3"
 sp-finality-grandpa = "2.0.0-alpha.3"
 sp-inherents = "2.0.0-alpha.3"
 sp-runtime = "2.0.0-alpha.3"
+substrate-frame-rpc-system = "2.0.0-alpha.3"
 secretstore-runtime = { package = "parity-secretstore-substrate-runtime", path = "../../substrate-runtime/runtime" }
 
 [build-dependencies]

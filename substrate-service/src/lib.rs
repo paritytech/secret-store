@@ -22,7 +22,7 @@ use std::{
 	sync::Arc,
 };
 use futures::{FutureExt, Stream, StreamExt, future::ready};
-use log::{error, trace};
+use log::trace;
 use primitives::{
 	Address, KeyServerId, Public, ServerKeyId,
 	error::Error,
@@ -91,6 +91,8 @@ pub trait Blockchain: 'static + Send + Sync {
 	type PendingEventsStream: Stream<Item = Self::Event> + Send;
 	/// Future that results in current key servers set.
 	type CurrentKeyServersSetFuture: Future<Output = BTreeSet<KeyServerId>> + Send;
+	/// Future that results in a boolean flag which is true when submitting response is required.
+	type ResponseRequiredFuture: Future<Output = Result<bool, String>> + Send;
 
 	/// Get block events.
 	fn block_events(&self, block_hash: Self::BlockHash) -> Self::BlockEventsStream;
@@ -105,53 +107,53 @@ pub trait Blockchain: 'static + Send + Sync {
 		&self,
 		block_hash: Self::BlockHash,
 		range: Range<usize>,
-	) -> Result<Self::PendingEventsStream, String>;
+	) -> Self::PendingEventsStream;
 	/// Is server key generation request response required?
 	fn is_server_key_generation_response_required(
 		&self,
 		key_id: ServerKeyId,
 		key_server_id: KeyServerId,
-	) -> Result<bool, String>;
+	) -> Self::ResponseRequiredFuture;
 
 	/// Get pending server key retrieval tasks range at given block.
 	fn server_key_retrieval_tasks(
 		&self,
 		block_hash: Self::BlockHash,
 		range: Range<usize>,
-	) -> Result<Self::PendingEventsStream, String>;
+	) -> Self::PendingEventsStream;
 	/// Is server key retrieval request response required?
 	fn is_server_key_retrieval_response_required(
 		&self,
 		key_id: ServerKeyId,
 		key_server_id: KeyServerId,
-	) -> Result<bool, String>;
+	) -> Self::ResponseRequiredFuture;
 
 	/// Get pending document key store tasks range at given block.
 	fn document_key_store_tasks(
 		&self,
 		block_hash: Self::BlockHash,
 		range: Range<usize>,
-	) -> Result<Self::PendingEventsStream, String>;
+	) -> Self::PendingEventsStream;
 	/// Is document key store request response required?
 	fn is_document_key_store_response_required(
 		&self,
 		key_id: ServerKeyId,
 		key_server_id: KeyServerId,
-	) -> Result<bool, String>;
+	) -> Self::ResponseRequiredFuture;
 
 	/// Get pending document key shadow retrieval tasks range at given block.
 	fn document_key_shadow_retrieval_tasks(
 		&self,
 		block_hash: Self::BlockHash,
 		range: Range<usize>,
-	) -> Result<Self::PendingEventsStream, String>;
+	) -> Self::PendingEventsStream;
 	/// Is document key shadow retrieval request response required?
 	fn is_document_key_shadow_retrieval_response_required(
 		&self,
 		key_id: ServerKeyId,
 		requester: Address,
 		key_server_id: KeyServerId,
-	) -> Result<bool, String>;
+	) -> Self::ResponseRequiredFuture;
 }
 
 /// Transaction pool API.
@@ -277,7 +279,7 @@ impl<B: Blockchain> blockchain_service::Block for SubstrateBlock<B> {
 fn pending_tasks_stream<B: Blockchain, S: Stream<Item = B::Event> + Send>(
 	blockchain: Arc<B>,
 	block_hash: B::BlockHash,
-	get_pending_tasks: impl Fn(Arc<B>, B::BlockHash, Range<usize>) -> Result<S, String> + Send + 'static,
+	get_pending_tasks: impl Fn(Arc<B>, B::BlockHash, Range<usize>) -> S + Send + Sync + 'static,
 ) -> impl Stream<Item = BlockchainServiceTask> + Send {
 	const PENDING_RANGE_LENGTH: usize = 16;
 
@@ -295,28 +297,10 @@ fn pending_tasks_stream<B: Blockchain, S: Stream<Item = B::Event> + Send>(
 
 				let next_range_start = range.start + PENDING_RANGE_LENGTH;
 				let pending_range = range.start..next_range_start;
-				let pending_tasks_result = get_pending_tasks(
-					blockchain.clone(),
-					block_hash.clone(),
-					pending_range,
-				);
-				match pending_tasks_result {
-					Ok(pending_tasks) => {
-						pending = pending_tasks
-							.filter_map(|event| ready(MaybeSecretStoreEvent::as_secret_store_event(event)))
-							.collect()
-							.await;
-					},
-					Err(error) => {
-						error!(
-							target: "secretstore",
-							"Failed to read pending tasks: {}",
-							error,
-						);
-
-						return None;
-					}
-				}
+				pending = get_pending_tasks(blockchain.clone(),block_hash.clone(),pending_range)
+					.filter_map(|event| ready(MaybeSecretStoreEvent::as_secret_store_event(event)))
+					.collect()
+					.await;
 
 				if pending.len() == PENDING_RANGE_LENGTH {
 					range = next_range_start..range.end;

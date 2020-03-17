@@ -22,6 +22,9 @@ mod key_server;
 mod serialization;
 pub mod network;
 
+#[cfg(feature = "db-key-storage")]
+pub mod db_key_storage;
+
 #[cfg(test)]
 mod integration_test;
 

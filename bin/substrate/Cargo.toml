@@ -1,0 +1,45 @@
+[package]
+name = "parity-secretstore-substrate"
+version = "1.0.0"
+authors = ["Parity Technologies <admin@parity.io>"]
+edition = "2018"
+
+[dependencies]
+
+# utilitarian dependencies
+
+ansi_term = "0.9"
+clap = { version = "2.33", features = ["yaml"] }
+codec = { package = "parity-scale-codec", version = "1.0" }
+env_logger = "0.7"
+futures = { version = "0.3", features = ["thread-pool"] }
+hex = "0.4"
+jsonrpsee = { git = "https://github.com/paritytech/jsonrpsee.git", features = ["ws"] }
+log = "0.4"
+parity-crypto = { version = "0.5", features = ["publickey"] }
+parking_lot = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_with = "1.4"
+serde_json = "1.0"
+time = "0.1"
+toml = "0.5"
+
+# direct substrate references
+
+frame-system = "2.0.0-alpha.3"
+pallet-transaction-payment = "2.0.0-alpha.3"
+sp-core = "2.0.0-alpha.3"
+sp-runtime = "2.0.0-alpha.3"
+sp-version = "2.0.0-alpha.3"
+
+# internal secret store references
+
+key-server = { package = "parity-secretstore-key-server", path = "../../key-server" }
+primitives = { package = "parity-secretstore-primitives", path = "../../primitives" }
+substrate-runtime = { package = "parity-secretstore-substrate-runtime", path = "../../substrate-runtime/runtime" }
+substrate-service = { package = "parity-secretstore-substrate-service", path = "../../substrate-service" }
+runtime-module = { package = "parity-secretstore-substrate-runtime-module", path = "../../substrate-runtime/module" }
+runtime-primitives = { package = "parity-secretstore-substrate-runtime-primitives", path = "../../substrate-runtime/primitives" }
+
+[dev-dependencies]
+tempdir = "0.3"

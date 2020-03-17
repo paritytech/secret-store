@@ -1,5 +1,6 @@
 [workspace]
 members = [
+	"bin/substrate",
 	"bin/substrate-node",
 	"blockchain-service",
 	"ethereum-service",

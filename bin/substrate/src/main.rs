@@ -30,7 +30,7 @@ use std::{
 	io::Write,
 	sync::Arc,
 };
-use futures::FutureExt;
+use futures::{FutureExt, TryFutureExt};
 use log::error;
 use parity_crypto::publickey::{KeyPair, public_to_address};
 use primitives::{
@@ -55,7 +55,16 @@ fn main() {
 	};
 
 	let _ = futures::executor::LocalPool::new()
-		.run_until(run_key_server(arguments));
+		.run_until(
+			run_key_server(arguments)
+				.map_err(|error| {
+					error!(
+						target: "secretstore",
+						"Failed to start: {:?}",
+						error,
+					);
+				})
+		);
 }
 
 /// Run key server ad blockchain service.
@@ -108,7 +117,7 @@ async fn start_key_server(
 ), String> {
 	// let's connect to Substrate node first
 	let client = substrate_client::Client::new(
-		&format!("{}:{}", arguments.sub_host, arguments.sub_port),
+		&format!("ws://{}:{}", arguments.sub_host, arguments.sub_port),
 		runtime::create_transaction_signer(
 			&arguments.sub_signer,
 			arguments.sub_signer_password.as_deref(),

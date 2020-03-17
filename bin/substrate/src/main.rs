@@ -124,8 +124,6 @@ async fn start_key_server(
 		)?,
 	).await.map_err(|error| format!("Failed to start substrate client: {:?}", error))?;
 
-	// TODO: use db key storage
-
 	// start key server
 	let self_key_pair = KeyPair::from_secret(arguments.self_secret)
 		.map_err(|error| format!("{}", error))?;
@@ -137,10 +135,14 @@ async fn start_key_server(
 		self_id.clone(),
 		thread_pool,
 	));
-	let (key_storage, key_server) = key_server::start(
+	let key_storage = Arc::new(::key_server::db_key_storage::PersistentKeyStorage::new(
+		&std::path::Path::new(&arguments.db_path),
+	).map_err(|error| format!("{:?}", error))?);
+	let key_server = key_server::start(
 		tokio_runtime.executor(),
 		key_server_key_pair.clone(),
 		arguments.net_port,
+		key_storage.clone(),
 		acl_storage.clone(),
 		key_server_set.clone(),
 	).map_err(|error| format!("{:?}", error))?;

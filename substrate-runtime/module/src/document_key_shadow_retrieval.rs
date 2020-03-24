@@ -56,6 +56,7 @@ pub struct DocumentKeyShadowRetrievalRequest<Number> {
 
 /// Response from single key server from single decryption session.
 #[derive(Default, Decode, Encode)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct DocumentKeyShadowRetrievalPersonalData {
 	/// Participated key servers mask.
 	pub participants: KeyServersMask,
@@ -371,6 +372,21 @@ mod tests {
 	use crate::mock::*;
 	use super::*;
 
+	fn ensure_clean_storage(key: ServerKeyId, requester: EntityId) {
+		assert_eq!(DocumentKeyShadowRetrievalRequestsKeys::get(), vec![]);
+		assert!(!DocumentKeyShadowRetrievalRequests::<TestRuntime>::contains_key((key, requester)));
+		assert_eq!(
+			DocumentKeyShadowRetrievalCommonResponses::iter_prefix((key, requester))
+				.collect::<Vec<_>>(),
+			vec![],
+		);
+		assert_eq!(
+			DocumentKeyShadowRetrievalPersonalResponses::iter_prefix((key, requester))
+				.collect::<Vec<_>>(),
+			vec![],
+		);
+	}
+
 	#[test]
 	fn should_accept_document_key_shadow_retrieval_request() {
 		default_initialization_with_five_servers().execute_with(|| {
@@ -402,6 +418,8 @@ mod tests {
 				[32; 32].into(),
 				REAL_REQUESTER1_PUBLIC.into(),
 			).unwrap_err();
+
+			ensure_clean_storage([32; 32].into(), REAL_REQUESTER1_ADDRESS.into());
 		});
 	}
 
@@ -414,6 +432,8 @@ mod tests {
 				[32; 32].into(),
 				REAL_REQUESTER2_PUBLIC.into(),
 			).unwrap_err();
+
+			ensure_clean_storage([32; 32].into(), REAL_REQUESTER2_ADDRESS.into());
 		});
 	}
 

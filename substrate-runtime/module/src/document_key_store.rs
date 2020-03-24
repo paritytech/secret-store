@@ -168,6 +168,7 @@ impl<T: Trait> DocumentKeyStoreService<T> {
 	}
 }
 
+/// Deletes request and all associated data.
 fn delete_request<T: Trait>(request: &ServerKeyId) {
 	DocumentKeyStoreResponses::remove_prefix(request);
 	DocumentKeyStoreRequests::<T>::remove(request);

@@ -304,8 +304,6 @@ impl<T: Trait> DocumentKeyShadowRetrievalService<T> {
 			return Ok(());
 		}
 
-		// TODO: do we reset this when KSset changes???
-
 		// else error has occured during personal data retrieval
 		// this could be:
 		// 1) access denied error (because KS is out of sync?)

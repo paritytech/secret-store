@@ -247,6 +247,7 @@ impl<T: Trait> ServerKeyRetrievalService<T> {
 	}
 }
 
+/// Deletes request and all associated data.
 fn delete_request<T: Trait>(request: &ServerKeyId) {
 	ServerKeyRetrievalResponses::remove_prefix(request);
 	ServerKeyRetrievalThresholdResponses::remove_prefix(request);
@@ -263,6 +264,19 @@ fn delete_request<T: Trait>(request: &ServerKeyId) {
 mod tests {
 	use crate::mock::*;
 	use super::*;
+
+	fn ensure_clean_storage(key: ServerKeyId) {
+		assert_eq!(ServerKeyRetrievalRequestsKeys::get(), vec![]);
+		assert!(!ServerKeyRetrievalRequests::<TestRuntime>::contains_key(key));
+		assert_eq!(
+			ServerKeyRetrievalResponses::iter_prefix(key).collect::<Vec<_>>(),
+			vec![],
+		);
+		assert_eq!(
+			ServerKeyRetrievalThresholdResponses::iter_prefix(key).collect::<Vec<_>>(),
+			vec![],
+		);
+	}
 
 	#[test]
 	fn should_accept_server_key_retrieval_request() {
@@ -290,6 +304,8 @@ mod tests {
 				Origin::signed(REQUESTER2),
 				[32; 32].into(),
 			).unwrap_err();
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -375,6 +391,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyRetrieved([32; 32].into(), [42; 64].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -439,6 +457,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyRetrieved([32; 32].into(), [42; 64].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -497,6 +517,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyRetrieved([32; 32].into(), [42; 64].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -549,6 +571,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyRetrieved([32; 32].into(), [42; 64].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -640,6 +664,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyRetrievalError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -699,6 +725,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyRetrievalError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -758,6 +786,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyRetrievalError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -855,6 +885,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyRetrievalError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -909,6 +941,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyRetrieved([32; 32].into(), [42; 64].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -965,6 +999,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyRetrievalError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 }

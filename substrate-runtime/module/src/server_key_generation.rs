@@ -178,6 +178,7 @@ impl<T: Trait> ServerKeyGenerationService<T> {
 	}
 }
 
+/// Deletes request and all associated data.
 fn delete_request<T: Trait>(request: &ServerKeyId) {
 	ServerKeyGenerationResponses::remove_prefix(request);
 	ServerKeyGenerationRequests::<T>::remove(request);
@@ -430,6 +431,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyGenerationError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -475,6 +478,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyGenerationError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -500,6 +505,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyGenerationError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -525,6 +532,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyGenerationError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 }

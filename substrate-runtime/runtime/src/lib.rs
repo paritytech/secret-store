@@ -384,15 +384,10 @@ impl_runtime_apis! {
 
 	impl secretstore_runtime_primitives::acl_storage::SecretStoreAclApi<Block> for Runtime {
 		fn check(
-			_requester: secretstore_runtime_primitives::EntityId,
+			requester: secretstore_runtime_primitives::EntityId,
 			key: secretstore_runtime_primitives::ServerKeyId,
 		) -> bool {
-			// TODO: change to real impl
-			if key.as_ref()[31] % 2 == 0 {
-				true
-			} else {
-				false
-			}
+			SecretStore::check_key_access(key, requester)
 		}
 	}
 

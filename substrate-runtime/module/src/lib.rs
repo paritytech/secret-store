@@ -505,6 +505,11 @@ impl<T: Trait> Module<T> {
 		key_server_set::<T>().current_set_with_indices()
 	}
 
+	/// Check if requester has access to private portion of server key.
+	pub fn check_key_access(key: ServerKeyId, requester: EntityId) -> bool {
+		KeyOwners::get(key).contains(&requester)
+	}
+
 	/// Get pending server key generation tasks.
 	pub fn server_key_generation_tasks(begin: u32, end: u32) -> Vec<primitives::service::ServiceTask> {
 		ServerKeyGenerationRequestsKeys::get()

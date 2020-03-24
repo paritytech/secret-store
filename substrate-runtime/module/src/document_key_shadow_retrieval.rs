@@ -1300,4 +1300,140 @@ mod tests {
 			));
 		});
 	}
+
+	#[test]
+	fn should_publish_common_and_personal_data() {
+		default_initialization_with_five_servers().execute_with(|| {
+			// ask to retrieve document key shadow
+			DocumentKeyShadowRetrievalService::<TestRuntime>::retrieve(
+				Origin::signed(REAL_REQUESTER1),
+				[32; 32].into(),
+				REAL_REQUESTER1_PUBLIC.into(),
+			).unwrap();
+
+			// receive same response from 50%+1 servers
+			let events_count = frame_system::Module::<TestRuntime>::events().len();
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_common_retrieved(
+				Origin::signed(KEY_SERVER0),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				[21; 64].into(),
+				2,
+			).unwrap();
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_common_retrieved(
+				Origin::signed(KEY_SERVER1),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				[21; 64].into(),
+				2,
+			).unwrap();
+			assert_eq!(
+				events_count,
+				frame_system::Module::<TestRuntime>::events().len(),
+			);
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_common_retrieved(
+				Origin::signed(KEY_SERVER2),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				[21; 64].into(),
+				2,
+			).unwrap();
+
+			// check that common data is published and personal data retrieval is requested
+			assert_eq!(
+				events_count + 2,
+				frame_system::Module::<TestRuntime>::events().len(),
+			);
+			assert!(
+				frame_system::Module::<TestRuntime>::events().into_iter()
+					.find(|e| e.event == Event::DocumentKeyCommonRetrieved(
+						[32; 32].into(),
+						REAL_REQUESTER1_ADDRESS.into(),
+						[21; 64].into(),
+						2,
+					).into())
+					.is_some(),
+			);
+			assert!(
+				frame_system::Module::<TestRuntime>::events().into_iter()
+					.find(|e| e.event == Event::DocumentKeyPersonalRetrievalRequested(
+						[32; 32].into(),
+						REAL_REQUESTER1_PUBLIC.into(),
+					).into())
+					.is_some(),
+			);
+
+			// now respond with personal data (we need 2+1 responses)
+			let events_count = frame_system::Module::<TestRuntime>::events().len();
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_personal_retrieved(
+				Origin::signed(KEY_SERVER0),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				KeyServersMask::from_index(0)
+					.union(KeyServersMask::from_index(1))
+					.union(KeyServersMask::from_index(2)),
+				[63; 64].into(),
+				vec![10],
+			).unwrap();
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_personal_retrieved(
+				Origin::signed(KEY_SERVER1),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				KeyServersMask::from_index(0)
+					.union(KeyServersMask::from_index(1))
+					.union(KeyServersMask::from_index(2)),
+				[63; 64].into(),
+				vec![11],
+			).unwrap();
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_personal_retrieved(
+				Origin::signed(KEY_SERVER2),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				KeyServersMask::from_index(0)
+					.union(KeyServersMask::from_index(1))
+					.union(KeyServersMask::from_index(2)),
+				[63; 64].into(),
+				vec![12],
+			).unwrap();
+
+			// ensure that everything required has been published
+			assert_eq!(
+				events_count + 3,
+				frame_system::Module::<TestRuntime>::events().len(),
+			);
+			assert!(
+				frame_system::Module::<TestRuntime>::events().into_iter()
+					.find(|e| e.event == Event::DocumentKeyPersonalRetrieved(
+						[32; 32].into(),
+						REAL_REQUESTER1_ADDRESS.into(),
+						[63; 64].into(),
+						vec![10],
+					).into())
+					.is_some(),
+			);
+			assert!(
+				frame_system::Module::<TestRuntime>::events().into_iter()
+					.find(|e| e.event == Event::DocumentKeyPersonalRetrieved(
+						[32; 32].into(),
+						REAL_REQUESTER1_ADDRESS.into(),
+						[63; 64].into(),
+						vec![11],
+					).into())
+					.is_some(),
+			);
+			assert!(
+				frame_system::Module::<TestRuntime>::events().into_iter()
+					.find(|e| e.event == Event::DocumentKeyPersonalRetrieved(
+						[32; 32].into(),
+						REAL_REQUESTER1_ADDRESS.into(),
+						[63; 64].into(),
+						vec![12],
+					).into())
+					.is_some(),
+			);
+
+			// ensure that everything is purged from the storage
+			ensure_clean_storage([32; 32].into(), REAL_REQUESTER1_ADDRESS.into());
+		});
+	}
 }

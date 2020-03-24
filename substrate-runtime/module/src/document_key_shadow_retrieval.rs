@@ -52,18 +52,17 @@ pub struct DocumentKeyShadowRetrievalRequest<Number> {
 	pub personal_retrieval_errors_mask: KeyServersMask,
 	/// Personal data: retrieval errors count.
 	pub personal_retrieval_errors_count: u8,
-/*	/// Personal data: number of reported errors.
-	pub personal_data_keys: Vec<>,*/
 }
 
-/// Document key retrieval data.
+/// Response from single key server from single decryption session.
 #[derive(Default, Decode, Encode)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct DocumentKeyShadowRetrievalPersonalData {
-	///
+	/// Participated key servers mask.
 	pub participants: KeyServersMask,
-	///
+	/// Mask of servers that have reported result of the session.
 	pub reported: KeyServersMask,
-	/// 
+	/// Number of servers that have reported result of the session.
 	pub reported_count: u8,
 }
 
@@ -93,7 +92,6 @@ impl<T: Trait> DocumentKeyShadowRetrievalService<T> {
 		let requester_public_hash = sp_io::hashing::keccak_256(requester_public.as_fixed_bytes());
 		let mut computed_requester_address = EntityId::zero();
 		computed_requester_address.as_bytes_mut().copy_from_slice(&requester_public_hash[12..]);
-		// TODO: add test for this condition
 		ensure!(
 			requester == computed_requester_address,
 			"Invalid public key passed",
@@ -306,8 +304,6 @@ impl<T: Trait> DocumentKeyShadowRetrievalService<T> {
 			return Ok(());
 		}
 
-		// TODO: do we reset this when KSset changes???
-
 		// else error has occured during personal data retrieval
 		// this could be:
 		// 1) access denied error (because KS is out of sync?)
@@ -356,6 +352,7 @@ impl<T: Trait> DocumentKeyShadowRetrievalService<T> {
 	}
 }
 
+/// Deletes request and all associated data.
 fn delete_request<T: Trait>(request: &(ServerKeyId, EntityId)) {
 	DocumentKeyShadowRetrievalCommonResponses::remove_prefix(request);
 	DocumentKeyShadowRetrievalPersonalResponses::remove_prefix(request);
@@ -372,6 +369,21 @@ fn delete_request<T: Trait>(request: &(ServerKeyId, EntityId)) {
 mod tests {
 	use crate::mock::*;
 	use super::*;
+
+	fn ensure_clean_storage(key: ServerKeyId, requester: EntityId) {
+		assert_eq!(DocumentKeyShadowRetrievalRequestsKeys::get(), vec![]);
+		assert!(!DocumentKeyShadowRetrievalRequests::<TestRuntime>::contains_key((key, requester)));
+		assert_eq!(
+			DocumentKeyShadowRetrievalCommonResponses::iter_prefix((key, requester))
+				.collect::<Vec<_>>(),
+			vec![],
+		);
+		assert_eq!(
+			DocumentKeyShadowRetrievalPersonalResponses::iter_prefix((key, requester))
+				.collect::<Vec<_>>(),
+			vec![],
+		);
+	}
 
 	#[test]
 	fn should_accept_document_key_shadow_retrieval_request() {
@@ -396,6 +408,20 @@ mod tests {
 	}
 
 	#[test]
+	fn should_reject_document_key_shadow_retrieval_request_from_invalid_public() {
+		default_initialization_with_five_servers().execute_with(|| {
+			// ask to retrieve document key shadow
+			DocumentKeyShadowRetrievalService::<TestRuntime>::retrieve(
+				Origin::signed(REAL_REQUESTER2),
+				[32; 32].into(),
+				REAL_REQUESTER1_PUBLIC.into(),
+			).unwrap_err();
+
+			ensure_clean_storage([32; 32].into(), REAL_REQUESTER1_ADDRESS.into());
+		});
+	}
+
+	#[test]
 	fn should_reject_document_key_shadow_retrieval_request_when_fee_is_not_paid() {
 		default_initialization_with_five_servers().execute_with(|| {
 			// ask to retrieve document key shadow
@@ -404,6 +430,8 @@ mod tests {
 				[32; 32].into(),
 				REAL_REQUESTER2_PUBLIC.into(),
 			).unwrap_err();
+
+			ensure_clean_storage([32; 32].into(), REAL_REQUESTER2_ADDRESS.into());
 		});
 	}
 
@@ -1268,6 +1296,142 @@ mod tests {
 				[32; 32].into(),
 				REAL_REQUESTER1_ADDRESS.into(),
 			));
+		});
+	}
+
+	#[test]
+	fn should_publish_common_and_personal_data() {
+		default_initialization_with_five_servers().execute_with(|| {
+			// ask to retrieve document key shadow
+			DocumentKeyShadowRetrievalService::<TestRuntime>::retrieve(
+				Origin::signed(REAL_REQUESTER1),
+				[32; 32].into(),
+				REAL_REQUESTER1_PUBLIC.into(),
+			).unwrap();
+
+			// receive same response from 50%+1 servers
+			let events_count = frame_system::Module::<TestRuntime>::events().len();
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_common_retrieved(
+				Origin::signed(KEY_SERVER0),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				[21; 64].into(),
+				2,
+			).unwrap();
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_common_retrieved(
+				Origin::signed(KEY_SERVER1),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				[21; 64].into(),
+				2,
+			).unwrap();
+			assert_eq!(
+				events_count,
+				frame_system::Module::<TestRuntime>::events().len(),
+			);
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_common_retrieved(
+				Origin::signed(KEY_SERVER2),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				[21; 64].into(),
+				2,
+			).unwrap();
+
+			// check that common data is published and personal data retrieval is requested
+			assert_eq!(
+				events_count + 2,
+				frame_system::Module::<TestRuntime>::events().len(),
+			);
+			assert!(
+				frame_system::Module::<TestRuntime>::events().into_iter()
+					.find(|e| e.event == Event::DocumentKeyCommonRetrieved(
+						[32; 32].into(),
+						REAL_REQUESTER1_ADDRESS.into(),
+						[21; 64].into(),
+						2,
+					).into())
+					.is_some(),
+			);
+			assert!(
+				frame_system::Module::<TestRuntime>::events().into_iter()
+					.find(|e| e.event == Event::DocumentKeyPersonalRetrievalRequested(
+						[32; 32].into(),
+						REAL_REQUESTER1_PUBLIC.into(),
+					).into())
+					.is_some(),
+			);
+
+			// now respond with personal data (we need 2+1 responses)
+			let events_count = frame_system::Module::<TestRuntime>::events().len();
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_personal_retrieved(
+				Origin::signed(KEY_SERVER0),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				KeyServersMask::from_index(0)
+					.union(KeyServersMask::from_index(1))
+					.union(KeyServersMask::from_index(2)),
+				[63; 64].into(),
+				vec![10],
+			).unwrap();
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_personal_retrieved(
+				Origin::signed(KEY_SERVER1),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				KeyServersMask::from_index(0)
+					.union(KeyServersMask::from_index(1))
+					.union(KeyServersMask::from_index(2)),
+				[63; 64].into(),
+				vec![11],
+			).unwrap();
+			DocumentKeyShadowRetrievalService::<TestRuntime>::on_personal_retrieved(
+				Origin::signed(KEY_SERVER2),
+				[32; 32].into(),
+				REAL_REQUESTER1_ADDRESS.into(),
+				KeyServersMask::from_index(0)
+					.union(KeyServersMask::from_index(1))
+					.union(KeyServersMask::from_index(2)),
+				[63; 64].into(),
+				vec![12],
+			).unwrap();
+
+			// ensure that everything required has been published
+			assert_eq!(
+				events_count + 3,
+				frame_system::Module::<TestRuntime>::events().len(),
+			);
+			assert!(
+				frame_system::Module::<TestRuntime>::events().into_iter()
+					.find(|e| e.event == Event::DocumentKeyPersonalRetrieved(
+						[32; 32].into(),
+						REAL_REQUESTER1_ADDRESS.into(),
+						[63; 64].into(),
+						vec![10],
+					).into())
+					.is_some(),
+			);
+			assert!(
+				frame_system::Module::<TestRuntime>::events().into_iter()
+					.find(|e| e.event == Event::DocumentKeyPersonalRetrieved(
+						[32; 32].into(),
+						REAL_REQUESTER1_ADDRESS.into(),
+						[63; 64].into(),
+						vec![11],
+					).into())
+					.is_some(),
+			);
+			assert!(
+				frame_system::Module::<TestRuntime>::events().into_iter()
+					.find(|e| e.event == Event::DocumentKeyPersonalRetrieved(
+						[32; 32].into(),
+						REAL_REQUESTER1_ADDRESS.into(),
+						[63; 64].into(),
+						vec![12],
+					).into())
+					.is_some(),
+			);
+
+			// ensure that everything is purged from the storage
+			ensure_clean_storage([32; 32].into(), REAL_REQUESTER1_ADDRESS.into());
 		});
 	}
 }

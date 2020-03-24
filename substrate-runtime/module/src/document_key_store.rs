@@ -168,6 +168,7 @@ impl<T: Trait> DocumentKeyStoreService<T> {
 	}
 }
 
+/// Deletes request and all associated data.
 fn delete_request<T: Trait>(request: &ServerKeyId) {
 	DocumentKeyStoreResponses::remove_prefix(request);
 	DocumentKeyStoreRequests::<T>::remove(request);
@@ -183,6 +184,15 @@ fn delete_request<T: Trait>(request: &ServerKeyId) {
 mod tests {
 	use crate::mock::*;
 	use super::*;
+
+	fn ensure_clean_storage(key: ServerKeyId) {
+		assert_eq!(DocumentKeyStoreRequestsKeys::get(), vec![]);
+		assert!(!DocumentKeyStoreRequests::<TestRuntime>::contains_key(key));
+		assert_eq!(
+			DocumentKeyStoreResponses::iter_prefix(key).collect::<Vec<_>>(),
+			vec![],
+		);
+	}
 
 	#[test]
 	fn should_accept_document_key_store_request() {
@@ -219,6 +229,8 @@ mod tests {
 				[21; 64].into(),
 				[42; 64].into(),
 			).unwrap_err();
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -310,6 +322,8 @@ mod tests {
 				Origin::signed(KEY_SERVER1),
 				[32; 32].into(),
 			).unwrap();
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -392,6 +406,8 @@ mod tests {
 					.find(|e| e.event == Event::DocumentKeyStoreError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 

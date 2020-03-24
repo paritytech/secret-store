@@ -21,7 +21,7 @@ use codec::{Encode, Decode};
 use frame_support::{StorageValue, StorageMap, StorageDoubleMap, ensure};
 use primitives::{EntityId, ServerKeyId, KeyServerId};
 use frame_system::ensure_signed;
-use crate::service::{Responses, ResponseSupport, /*RequestDetails, */SecretStoreService};
+use crate::service::{Responses, ResponseSupport, SecretStoreService};
 use super::{
 	Trait, Module, Event,
 	ServerKeyGenerationFee,
@@ -48,7 +48,8 @@ pub struct ServerKeyGenerationRequest<Number> {
 pub struct ServerKeyGenerationService<T>(sp_std::marker::PhantomData<T>);
 
 impl<T: Trait> ServerKeyGenerationService<T> {
-	/// Request new server key generation. Generated key will be published via ServerKeyGenerated event when available.
+	/// Request new server key generation. Generated key will be published via
+	/// ServerKeyGenerated event when available.
 	pub fn generate(
 		origin: T::Origin,
 		id: ServerKeyId,
@@ -177,6 +178,7 @@ impl<T: Trait> ServerKeyGenerationService<T> {
 	}
 }
 
+/// Deletes request and all associated data.
 fn delete_request<T: Trait>(request: &ServerKeyId) {
 	ServerKeyGenerationResponses::remove_prefix(request);
 	ServerKeyGenerationRequests::<T>::remove(request);
@@ -192,6 +194,15 @@ fn delete_request<T: Trait>(request: &ServerKeyId) {
 mod tests {
 	use crate::mock::*;
 	use super::*;
+
+	fn ensure_clean_storage(key: ServerKeyId) {
+		assert_eq!(ServerKeyGenerationRequestsKeys::get(), vec![]);
+		assert!(!ServerKeyGenerationRequests::<TestRuntime>::contains_key(key));
+		assert_eq!(
+			ServerKeyGenerationResponses::iter_prefix(key).collect::<Vec<_>>(),
+			vec![],
+		);
+	}
 
 	#[test]
 	fn should_accept_server_key_generation_request() {
@@ -225,6 +236,8 @@ mod tests {
 				[32; 32].into(),
 				1,
 			).unwrap_err();
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -326,6 +339,8 @@ mod tests {
 				[32; 32].into(),
 				[42; 64].into(),
 			).unwrap();
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -416,6 +431,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyGenerationError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -461,6 +478,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyGenerationError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -486,6 +505,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyGenerationError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -511,6 +532,8 @@ mod tests {
 					.find(|e| e.event == Event::ServerKeyGenerationError([32; 32].into()).into())
 					.is_some(),
 			);
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 }

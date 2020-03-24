@@ -226,7 +226,7 @@ impl<M> Storage for RuntimeStorage<M> where
 		self.ensure_contains(id)?;
 
 		M::mutate(id, |key_server| {
-			let mut key_server = key_server.as_mut().expect("TODO");
+			let mut key_server = key_server.as_mut().expect("ensure_contains check passed; qed");
 			match key_server.address == address {
 				true => Err("Nothing to update"),
 				false => {

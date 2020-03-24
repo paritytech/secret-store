@@ -91,7 +91,6 @@ impl<T: Trait> DocumentKeyShadowRetrievalService<T> {
 		let requester_public_hash = sp_io::hashing::keccak_256(requester_public.as_fixed_bytes());
 		let mut computed_requester_address = EntityId::zero();
 		computed_requester_address.as_bytes_mut().copy_from_slice(&requester_public_hash[12..]);
-		// TODO: add test for this condition
 		ensure!(
 			requester == computed_requester_address,
 			"Invalid public key passed",
@@ -390,6 +389,18 @@ mod tests {
 					).into())
 					.is_some(),
 			);
+		});
+	}
+
+	#[test]
+	fn should_reject_document_key_shadow_retrieval_request_from_invalid_public() {
+		default_initialization_with_five_servers().execute_with(|| {
+			// ask to retrieve document key shadow
+			DocumentKeyShadowRetrievalService::<TestRuntime>::retrieve(
+				Origin::signed(REAL_REQUESTER2),
+				[32; 32].into(),
+				REAL_REQUESTER1_PUBLIC.into(),
+			).unwrap_err();
 		});
 	}
 

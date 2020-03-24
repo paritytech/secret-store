@@ -353,6 +353,7 @@ impl<T: Trait> DocumentKeyShadowRetrievalService<T> {
 	}
 }
 
+/// Deletes request and all associated data.
 fn delete_request<T: Trait>(request: &(ServerKeyId, EntityId)) {
 	DocumentKeyShadowRetrievalCommonResponses::remove_prefix(request);
 	DocumentKeyShadowRetrievalPersonalResponses::remove_prefix(request);

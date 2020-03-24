@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
-//! Common methods for all service.
+//! Common methods for all services.
 
 use frame_system::ensure_signed;
 use frame_support::{traits::{Currency, ExistenceRequirement}, StorageValue, StorageMap, StorageDoubleMap, StorageLinkedMap};
@@ -31,7 +31,12 @@ use codec::{Decode, Encode, EncodeLike};
 /// Map of response => number of key servers that have supported this response.
 pub struct ResponsesSupport<RequestKey, Response, Map>(sp_std::marker::PhantomData<(RequestKey, Response, Map)>);
 
-impl<RequestKey: EncodeLike, Response: EncodeLike, Map: StorageDoubleMap<RequestKey, Response, u8, Query=u8>> ResponsesSupport<RequestKey, Response, Map> {
+impl<RequestKey, Response, Map> ResponsesSupport<RequestKey, Response, Map>
+	where
+		RequestKey: EncodeLike,
+		Response: EncodeLike,
+		Map: StorageDoubleMap<RequestKey, Response, u8, Query=u8>,
+{
 	/// Increase support of given response by one. Returns new support
 	pub fn support(request: &RequestKey, response: &Response) -> u8 {
 		Map::mutate(request, response, |responses_count| {
@@ -93,14 +98,14 @@ impl<T: Trait> SecretStoreService<T> {
 		Ok(CurrentKeyServers::enumerate().count() as u8) // TODO: optimize?
 	}
 
-	///
+	/// Get key server index from call origin.
 	pub fn key_server_index_from_origin(origin: T::Origin) -> Result<u8, &'static str> {
 		let origin = ensure_signed(origin)?;
 		let origin_id = ClaimedId::<T>::get(&origin).ok_or("the caller has not claimed any id")?;
 		Self::key_server_index_from_id(origin_id)
 	}
 
-	///
+	/// Get key server index from its id.
 	pub fn key_server_index_from_id(id: KeyServerId) -> Result<u8, &'static str> {
 		CurrentKeyServers::get(id)
 			.map(|ks| ks.index)
@@ -109,25 +114,35 @@ impl<T: Trait> SecretStoreService<T> {
 
 	/// Deposit equal share of amount to each of key servers.
 	pub fn collect_service_fee(origin: &T::AccountId, fee: BalanceOf<T>) -> Result<(), &'static str> {
-		let key_servers_ids = CurrentKeyServers::enumerate().map(|(id, _)| id).collect::<Vec<_>>();
-		let key_servers_count = key_servers_ids.len() as u8;
+		let key_servers_accounts = CurrentKeyServers::enumerate()
+			.map(|(id, _)| id)
+			.map(|id| ClaimedBy::<T>::get(&id).ok_or("key server has not claimed id"))
+			.collect::<Result<Vec<_>, _>>()?;
+		let key_servers_count = key_servers_accounts.len() as u8;
 		let key_server_fee_share = fee / key_servers_count.into();
+
 		let mut fee_rest = fee;
-		for i in 0..key_servers_ids.len() - 1 {
-			let key_server_id = key_servers_ids[i];
-			let key_server_account = ClaimedBy::<T>::get(&key_server_id).ok_or("key server has not claimed id")?;
-			T::Currency::transfer(origin, &key_server_account, key_server_fee_share, ExistenceRequirement::AllowDeath)?;
+		for i in 0..key_servers_accounts.len() - 1 {
+			T::Currency::transfer(
+				origin,
+				&key_servers_accounts[i],
+				key_server_fee_share,
+				ExistenceRequirement::AllowDeath,
+			)?;
 			fee_rest -= key_server_fee_share;
 		}
 
-		let key_server_id = key_servers_ids[key_servers_ids.len() - 1];
-		let key_server_account = ClaimedBy::<T>::get(&key_server_id).ok_or("key server has not claimed id")?;
-		T::Currency::transfer(origin, &key_server_account, fee_rest, ExistenceRequirement::AllowDeath)?;
+		T::Currency::transfer(
+			origin,
+			&key_servers_accounts[key_servers_accounts.len() - 1],
+			fee_rest,
+			ExistenceRequirement::AllowDeath,
+		)?;
 
 		Ok(())
 	}
 
-	///
+	/// Inserts key server response into Responses.
 	pub fn insert_response<RequestKey, Response, Map>(
 		key_server_index: u8,
 		threshold: u8,

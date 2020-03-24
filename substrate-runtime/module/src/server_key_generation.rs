@@ -21,7 +21,7 @@ use codec::{Encode, Decode};
 use frame_support::{StorageValue, StorageMap, StorageDoubleMap, ensure};
 use primitives::{EntityId, ServerKeyId, KeyServerId};
 use frame_system::ensure_signed;
-use crate::service::{Responses, ResponseSupport, /*RequestDetails, */SecretStoreService};
+use crate::service::{Responses, ResponseSupport, SecretStoreService};
 use super::{
 	Trait, Module, Event,
 	ServerKeyGenerationFee,
@@ -48,7 +48,8 @@ pub struct ServerKeyGenerationRequest<Number> {
 pub struct ServerKeyGenerationService<T>(sp_std::marker::PhantomData<T>);
 
 impl<T: Trait> ServerKeyGenerationService<T> {
-	/// Request new server key generation. Generated key will be published via ServerKeyGenerated event when available.
+	/// Request new server key generation. Generated key will be published via
+	/// ServerKeyGenerated event when available.
 	pub fn generate(
 		origin: T::Origin,
 		id: ServerKeyId,

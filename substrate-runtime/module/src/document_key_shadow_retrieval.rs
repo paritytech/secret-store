@@ -52,18 +52,16 @@ pub struct DocumentKeyShadowRetrievalRequest<Number> {
 	pub personal_retrieval_errors_mask: KeyServersMask,
 	/// Personal data: retrieval errors count.
 	pub personal_retrieval_errors_count: u8,
-/*	/// Personal data: number of reported errors.
-	pub personal_data_keys: Vec<>,*/
 }
 
-/// Document key retrieval data.
+/// Response from single key server from single decryption session.
 #[derive(Default, Decode, Encode)]
 pub struct DocumentKeyShadowRetrievalPersonalData {
-	///
+	/// Participated key servers mask.
 	pub participants: KeyServersMask,
-	///
+	/// Mask of servers that have reported result of the session.
 	pub reported: KeyServersMask,
-	/// 
+	/// Number of servers that have reported result of the session.
 	pub reported_count: u8,
 }
 

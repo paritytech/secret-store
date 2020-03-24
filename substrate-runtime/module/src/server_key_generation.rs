@@ -194,6 +194,15 @@ mod tests {
 	use crate::mock::*;
 	use super::*;
 
+	fn ensure_clean_storage(key: ServerKeyId) {
+		assert_eq!(ServerKeyGenerationRequestsKeys::get(), vec![]);
+		assert!(!ServerKeyGenerationRequests::<TestRuntime>::contains_key(key));
+		assert_eq!(
+			ServerKeyGenerationResponses::iter_prefix(key).collect::<Vec<_>>(),
+			vec![],
+		);
+	}
+
 	#[test]
 	fn should_accept_server_key_generation_request() {
 		default_initialization().execute_with(|| {
@@ -226,6 +235,8 @@ mod tests {
 				[32; 32].into(),
 				1,
 			).unwrap_err();
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 
@@ -327,6 +338,8 @@ mod tests {
 				[32; 32].into(),
 				[42; 64].into(),
 			).unwrap();
+
+			ensure_clean_storage([32; 32].into());
 		});
 	}
 

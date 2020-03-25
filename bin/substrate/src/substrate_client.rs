@@ -114,7 +114,16 @@ impl Client {
 		self.best_block.read().clone()
 	}
 
-	/// Subscribe to new blocks.
+	/// Subscribe to best blocks.
+	pub async fn subscribe_best_heads(&self) -> Result<jsonrpsee::client::Subscription<Header>, Error> {
+		self.rpc_client.subscribe(
+			"chain_subscribeNewHeads",
+			jsonrpsee::common::Params::None,
+			"chain_unsubscribeNewHeads",
+		).await.map_err(Error::RequestFailed)
+	}
+
+	/// Subscribe to finalized blocks.
 	pub async fn subscribe_finalized_heads(&self) -> Result<jsonrpsee::client::Subscription<Header>, Error> {
 		self.rpc_client.subscribe(
 			"chain_subscribeFinalizedHeads",
@@ -199,6 +208,29 @@ impl Client {
 			jsonrpsee::common::Params::Array(vec![
 				serde_json::to_value(hex_transaction).unwrap(),
 			]),
+		).await.map_err(Error::RequestFailed)
+	}
+
+	/// Submit and watch runtime transaction.
+	pub async fn submit_and_watch_transaction(
+		&self,
+		call: Call,
+	) -> Result<jsonrpsee::client::Subscription<crate::runtime::TransactionStatus>, Error> {
+		let index = self.next_account_index().await?;
+		let transaction = create_transaction(
+			call,
+			&self.signer,
+			index,
+			self.genesis_hash,
+			self.runtime_version,
+		);
+		let hex_transaction = format!("0x{}", hex::encode(transaction.encode()));
+		self.rpc_client.subscribe(
+			"author_submitAndWatchExtrinsic",
+			jsonrpsee::common::Params::Array(vec![
+				serde_json::to_value(hex_transaction).unwrap(),
+			]),
+			"author_unwatchExtrinsic",
 		).await.map_err(Error::RequestFailed)
 	}
 

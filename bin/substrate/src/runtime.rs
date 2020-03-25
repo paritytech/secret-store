@@ -57,6 +57,9 @@ pub type Index = substrate_runtime::Index;
 /// Crypto pair that is used to sign transactions.
 pub type Pair = sp_core::sr25519::Pair;
 
+/// Transaction status.
+pub type TransactionStatus = sp_transaction_pool::TransactionStatus<TransactionHash, BlockHash>;
+
 /// Create signer from given SURI and password.
 pub fn create_transaction_signer(
 	signer_uri: &str,

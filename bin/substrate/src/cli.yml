@@ -48,3 +48,44 @@ args:
         value_name: SUB_SIGNER_PASSWORD
         help: The password for the SURI of secret key to use when transactions are submitted to the Substrate node. Empty by default.
         takes_value: true
+subcommands:
+    - sub-submit:
+        about: Submit SS-related Substrate transaction.
+        args:
+            - sign-secret:
+                long: self-secret
+                value_name: SELF_SECRET
+                help: Hex-encoded secret key that is used to sign .
+                takes_value: true
+            - sub-host:
+                long: sub-host
+                value_name: SUB_HOST
+                help: Connect to Substrate node at given host. "localhost" by default.
+                takes_value: true
+            - sub-port:
+                long: sub-port
+                value_name: SUB_PORT
+                help: Connect to Substrate node at given port. 9944 by default.
+                takes_value: true
+            - sub-signer:
+                long: sub-signer
+                value_name: SUB_SIGNER
+                help: The SURI of secret key to use when transactions are submitted to the Substrate node. "//Alice" by default.
+                takes_value: true
+            - sub-signer-password:
+                long: sub-signer-password
+                value_name: SUB_SIGNER_PASSWORD
+                help: The password for the SURI of secret key to use when transactions are submitted to the Substrate node. Empty by default.
+                takes_value: true
+            - sub-call:
+                long: sub-call
+                value_name: SUB_CALL
+                help: Substrate call. Refer to SecretStoreTransaction enum for details.
+                takes_value: true
+                required: true
+            - wait:
+                long: wait
+                help: Wait until transaction is included in the block.
+            - wait-results:
+                long: wait-results
+                help: Wait until transaction is included in the block and it is processed by the Secret Store (if available).

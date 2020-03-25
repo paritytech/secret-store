@@ -23,6 +23,7 @@ mod key_server;
 mod key_server_set;
 mod runtime;
 mod service;
+mod subcommands;
 mod substrate_client;
 mod transaction_pool;
 
@@ -41,7 +42,17 @@ use primitives::{
 fn main() {
 	initialize();
 
-	let arguments = match arguments::parse_arguments(None) {
+	let yaml = clap::load_yaml!("cli.yml");
+	let clap_app = clap::App::from_yaml(yaml);
+	let matches = clap_app.get_matches();
+
+	match matches.subcommand() {
+		("sub-submit", Some(sub_submit_matches)) =>
+			return subcommands::submit_transaction::run(sub_submit_matches),
+		_ => (),
+	}
+
+	let arguments = match arguments::parse_arguments(&matches) {
 		Ok(arguments) => arguments,
 		Err(error) => {
 			error!(

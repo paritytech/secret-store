@@ -48,9 +48,9 @@ pub enum SecretStoreTransaction {
 */
 	/// Generate server key.
 	GenerateServerKey(ServerKeyId, u8),
-/*	/// Retrieve server key.
+	/// Retrieve server key.
 	RetrieveServerKey(ServerKeyId),
-	/// Store document key.
+/*	/// Store document key.
 	StoreDocumentKey(ServerKeyId, Public, Public),
 	/// Retrieve document key shadow.
 	RetrieveDocumentKeyShadow(ServerKeyId, Public),*/
@@ -113,6 +113,13 @@ fn parse_transaction(stransaction: &str) -> Result<SecretStoreTransaction, Strin
 		return Ok(SecretStoreTransaction::GenerateServerKey(key_id, threshold));
 	}
 
+	let retrieve_server_key_regex = regex::Regex::new(r"RetrieveServerKey\((.*)\)").expect("TODO");
+	if let Some(captures) = retrieve_server_key_regex.captures(stransaction) {
+		let key_id = ServerKeyId::from_str(captures.get(1).expect("TODO").as_str())
+			.map_err(|err| format!("{}", err))?;
+		return Ok(SecretStoreTransaction::RetrieveServerKey(key_id));
+	}
+
 	Err("unknown call".into())
 }
 
@@ -125,83 +132,131 @@ async fn process_transaction(
 	transaction: SecretStoreTransaction,
 ) -> Result<(), String> {
 	match transaction {
-		SecretStoreTransaction::GenerateServerKey(id, threshold) => {
-			// transaction events stream now (sometimes) missing finality notifications even
-			// in --dev mode. It also may miss finality notifications by design (when too many blocks
-			// are finalized at once)
-			// => we only use it to track Ready+Mined state
-			let mut transaction_stream = client.submit_and_watch_transaction(
-				crate::runtime::Call::SecretStore(
-					crate::runtime::SecretStoreCall::generate_server_key(id, threshold),
-				),
-			).await.map_err(|err| format!("{:?}", err))?;
-			let mut finalized_headers_stream = client.subscribe_finalized_heads()
-				.await
-				.map_err(|err| format!("{:?}", err))?;
-			let mut best_headers_stream = client.subscribe_best_heads()
-				.await
-				.map_err(|err| format!("{:?}", err))?;
-			let find_request = |event: &crate::runtime::Event| match *event {
+		SecretStoreTransaction::GenerateServerKey(id, threshold) => process_generic_transaction(
+			&client,
+			is_wait_mined,
+			is_wait_finalized,
+			is_wait_processed,
+			crate::runtime::SecretStoreCall::generate_server_key(id, threshold),
+			move |event| match *event {
 				crate::runtime::Event::secretstore_runtime_module(
 					runtime_module::Event::ServerKeyGenerationRequested(gen_id, _, gen_threshold),
 				) if gen_id == id && gen_threshold == threshold => true,
 				_ => false,
-			};
-
-			// wait until transaction is in the Ready queue
-			wait_accepted(&mut transaction_stream).await?;
-			// wait until transaction is mined
-			if is_wait_mined {
-				wait_mined(
-					&client,
-					&mut transaction_stream,
-					find_request,
-				).await?;
-			}
-			// wait until transaction block is finalized
-			if is_wait_finalized {
-				wait_finalized(
-					&client,
-					&mut finalized_headers_stream,
-					find_request,
-				).await?;
-			}
-			// wait until request is processed
-			if is_wait_processed {
-				wait_processed(
-					&client,
-					&mut best_headers_stream,
-					|event| match *event {
-						crate::runtime::Event::secretstore_runtime_module(
-							runtime_module::Event::ServerKeyGenerated(gen_id, gen_key),
-						) if gen_id == id => {
-							info!(
-								target: "secretstore",
-								"Server key has been generated: {:?}",
-								gen_key,
-							);
-							true
-						},
-						_ => false,
-					},
-					|event| match *event {
-						crate::runtime::Event::secretstore_runtime_module(
-							runtime_module::Event::ServerKeyGenerationError(gen_id),
-						) if gen_id == id => {
-							info!(
-								target: "secretstore",
-								"Server key generation has failed",
-							);
-							true
-						},
-						_ => false,
-					},
-				).await?;
-			}
-
-			Ok(())
-		},
+			},
+			move |event| match *event {
+				crate::runtime::Event::secretstore_runtime_module(
+					runtime_module::Event::ServerKeyGenerated(gen_id, gen_key),
+				) if gen_id == id => {
+					info!(
+						target: "secretstore",
+						"Server key has been generated: {:?}",
+						gen_key,
+					);
+					true
+				},
+				crate::runtime::Event::secretstore_runtime_module(
+					runtime_module::Event::ServerKeyGenerationError(gen_id),
+				) if gen_id == id => {
+					info!(
+						target: "secretstore",
+						"Server key generation has failed",
+					);
+					true
+				},
+				_ => false,
+			},
+		).await,
+		SecretStoreTransaction::RetrieveServerKey(id) => process_generic_transaction(
+			&client,
+			is_wait_mined,
+			is_wait_finalized,
+			is_wait_processed,
+			crate::runtime::SecretStoreCall::retrieve_server_key(id),
+			move |event| match *event {
+				crate::runtime::Event::secretstore_runtime_module(
+					runtime_module::Event::ServerKeyRetrievalRequested(req_id),
+				) if req_id == id => true,
+				_ => false,
+			},
+			move |event| match *event {
+				crate::runtime::Event::secretstore_runtime_module(
+					runtime_module::Event::ServerKeyRetrieved(req_id, req_key),
+				) if req_id == id => {
+					info!(
+						target: "secretstore",
+						"Server key has been retrieved: {:?}",
+						req_key,
+					);
+					true
+				},
+				crate::runtime::Event::secretstore_runtime_module(
+					runtime_module::Event::ServerKeyRetrievalError(req_id),
+				) if req_id == id => {
+					info!(
+						target: "secretstore",
+						"Server key retrieval has failed",
+					);
+					true
+				},
+				_ => false,
+			},
+		).await,
 	}
+}
+
+/// Process single generic transaction.
+async fn process_generic_transaction(
+	client: &Client,
+	is_wait_mined: bool,
+	is_wait_finalized: bool,
+	is_wait_processed: bool,
+	call: crate::runtime::SecretStoreCall,
+	mut find_request: impl FnMut(&crate::runtime::Event) -> bool,
+	mut find_response: impl FnMut(&crate::runtime::Event) -> bool,
+) -> Result<(), String> {
+	// transaction events stream now (sometimes) missing finality notifications even
+	// in --dev mode. It also may miss finality notifications by design (when too many blocks
+	// are finalized at once)
+	// => we only use it to track Ready+Mined state
+	let mut transaction_stream = client.submit_and_watch_transaction(
+		crate::runtime::Call::SecretStore(call),
+	).await.map_err(|err| format!("{:?}", err))?;
+	let mut finalized_headers_stream = client.subscribe_finalized_heads()
+		.await
+		.map_err(|err| format!("{:?}", err))?;
+	let mut best_headers_stream = client.subscribe_best_heads()
+		.await
+		.map_err(|err| format!("{:?}", err))?;
+
+	// wait until transaction is in the Ready queue
+	wait_accepted(&mut transaction_stream).await?;
+	// wait until transaction is mined
+	if is_wait_mined {
+		wait_mined(
+			&client,
+			&mut transaction_stream,
+			&mut find_request,
+		).await?;
+	}
+	// wait until transaction block is finalized
+	if is_wait_finalized {
+		wait_finalized(
+			&client,
+			&mut finalized_headers_stream,
+			&mut find_request,
+		).await?;
+	}
+	// wait until request is processed
+	if is_wait_processed {
+		wait_processed(
+			&client,
+			&mut best_headers_stream,
+			&mut find_response,
+		).await?;
+	}
+
+	Ok(())
 }
 
 /// Wait until transaction is accepted to the pool.
@@ -232,15 +287,15 @@ async fn wait_accepted(
 async fn wait_mined(
 	client: &Client,
 	stream: &mut jsonrpsee::client::Subscription<crate::runtime::TransactionStatus>,
-	filter_event: impl Fn(&crate::runtime::Event) -> bool,
+	filter_event: &mut impl FnMut(&crate::runtime::Event) -> bool,
 ) -> Result<(), String> {
 	loop {
 		let status = stream.next().await;
 		//trace_transaction_status(&status);
 		match status {
 			crate::runtime::TransactionStatus::InBlock(block_hash) => {
-				match filter_block_events(client, block_hash, &filter_event, None).await? {
-					Some(FilteredEvent::A) => {
+				match filter_block_events(client, block_hash, filter_event).await? {
+					Some(_) => {
 						info!(
 							target: "secretstore",
 							"Transaction is mined in block: {:?}",
@@ -248,10 +303,7 @@ async fn wait_mined(
 						);
 						return Ok(());
 					},
-					Some(FilteredEvent::B) => unreachable!(
-						"FilteredEvent::B may only happen if we pass two filter functions; qed",
-					),
-					None => return Err("Transaction block is missing required event".into()),
+					None => return Err("Transaction block is missing required event (Invalid Call?)".into()),
 				}
 			},
 			crate::runtime::TransactionStatus::Usurped(_)
@@ -267,13 +319,13 @@ async fn wait_mined(
 async fn wait_finalized(
 	client: &Client,
 	finalized_headers_stream: &mut jsonrpsee::client::Subscription<crate::runtime::Header>,
-	filter_event: impl Fn(&crate::runtime::Event) -> bool,
+	filter_event: &mut impl FnMut(&crate::runtime::Event) -> bool,
 ) -> Result<(), String> {
 	loop {
 		let finalized_header = finalized_headers_stream.next().await;
 		let finalized_header_hash = finalized_header.hash();
-		match filter_block_events(client, finalized_header_hash, &filter_event, None).await? {
-			Some(FilteredEvent::A) => {
+		match filter_block_events(client, finalized_header_hash, filter_event).await? {
+			Some(_) => {
 				info!(
 					target: "secretstore",
 					"Transaction block is finalized: {:?}",
@@ -281,9 +333,6 @@ async fn wait_finalized(
 				);
 				return Ok(());
 			},
-			Some(FilteredEvent::B) => unreachable!(
-				"FilteredEvent::B may only happen if we pass two filter functions; qed",
-			),
 			None => (),
 		}
 	}
@@ -293,47 +342,31 @@ async fn wait_finalized(
 async fn wait_processed(
 	client: &Client,
 	best_headers_stream: &mut jsonrpsee::client::Subscription<crate::runtime::Header>,
-	filter_successful_event: impl Fn(&crate::runtime::Event) -> bool,
-	filter_failed_event: impl Fn(&crate::runtime::Event) -> bool,
+	filter_event: &mut impl FnMut(&crate::runtime::Event) -> bool,
 ) -> Result<(), String> {
 	loop {
 		let best_header = best_headers_stream.next().await;
 		let best_header_hash = best_header.hash();
-		match filter_block_events(
-			client,
-			best_header_hash,
-			&filter_successful_event,
-			Some(&filter_failed_event),
-		).await? {
+		match filter_block_events(client, best_header_hash, filter_event).await? {
 			Some(_) => return Ok(()),
 			None => (),
 		}
 	}
 }
 
-/// Filter events result.
-enum FilteredEvent { A, B }
-
 /// Filter block events.
 async fn filter_block_events(
 	client: &Client,
 	block_hash: crate::runtime::BlockHash,
-	filter_event1: &dyn Fn(&crate::runtime::Event) -> bool,
-	filter_event2: Option<&dyn Fn(&crate::runtime::Event) -> bool>
-) -> Result<Option<FilteredEvent>, String>{
+	filter_event: &mut impl FnMut(&crate::runtime::Event) -> bool,
+) -> Result<Option<()>, String>{
 	let events = client
 		.header_events(block_hash)
 		.await
 		.map_err(|err| format!("{:?}", err))?;
 	for event in events {
-		if filter_event1(&event.event) {
-			return Ok(Some(FilteredEvent::A));
-		}
-
-		if let Some(filter_event2) = filter_event2 {
-			if filter_event2(&event.event) {
-				return Ok(Some(FilteredEvent::B));
-			}
+		if filter_event(&event.event) {
+			return Ok(Some(()));
 		}
 	}
 

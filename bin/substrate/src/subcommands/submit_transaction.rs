@@ -17,7 +17,7 @@
 use std::{collections::HashMap, str::FromStr};
 use clap::ArgMatches;
 use log::{error, info};
-use parity_crypto::publickey::{public_to_address, Public};
+use parity_crypto::publickey::{Address, Public, public_to_address};
 use primitives::ServerKeyId;
 use crate::{
 	arguments::{SubstrateArguments, parse_substrate_arguments},
@@ -31,6 +31,8 @@ pub enum SecretStoreTransaction {
 
 	/// Claim key.
 	ClaimKey(ServerKeyId),
+	/// Transfer key ownership.
+	TransferKey(ServerKeyId, Address),
 
 	// === Key Server calls ===
 
@@ -143,6 +145,16 @@ fn parse_transaction(stransaction: &str) -> Result<SecretStoreTransaction, Strin
 		return Ok(SecretStoreTransaction::ClaimKey(key_id));
 	}
 
+	// to transfer key ownership, we only need to provide key id and new owner
+	let transfer_key_regex = regex::Regex::new(r"TransferKey\((.*),[ /t]*(.*)\)").expect(REGEX_PROOF);
+	if let Some(captures) = transfer_key_regex.captures(stransaction) {
+		let key_id = ServerKeyId::from_str(captures.get(1).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
+			.map_err(|err| format!("{}", err))?;
+		let new_owner = Address::from_str(captures.get(2).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
+			.map_err(|err| format!("{}", err))?;
+		return Ok(SecretStoreTransaction::TransferKey(key_id, new_owner));
+	}
+
 	// to generate server key, caller must provide: key id and threshold
 	let generate_server_key_regex = regex::Regex::new(r"GenerateServerKey\((.*),[ /t]*(.*)\)").expect(REGEX_PROOF);
 	if let Some(captures) = generate_server_key_regex.captures(stransaction) {
@@ -196,8 +208,8 @@ async fn process_transaction(
 	is_wait_processed: bool,
 	transaction: SecretStoreTransaction,
 ) -> Result<(), String> {
-	// TODO: even if ClaimKey fails, we still consider it successful
-	// TODO: we consider ClaimKey finalized even if it is not
+	// TODO: even if ClaimKey/TransferKey fails, we still consider it successful
+	// TODO: we consider ClaimKey/TransferKey finalized even if it is not
 	
 	match transaction {
 		SecretStoreTransaction::ClaimKey(id) => process_generic_transaction(
@@ -206,6 +218,15 @@ async fn process_transaction(
 			false,
 			false,
 			crate::runtime::SecretStoreCall::claim_key(id),
+			|_| true,
+			|_| true,
+		).await,
+		SecretStoreTransaction::TransferKey(id, new_owner) => process_generic_transaction(
+			&client,
+			is_wait_mined,
+			false,
+			false,
+			crate::runtime::SecretStoreCall::transfer_key(id, new_owner),
 			|_| true,
 			|_| true,
 		).await,

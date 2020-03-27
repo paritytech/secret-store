@@ -19,31 +19,18 @@ use clap::ArgMatches;
 use log::{error, info};
 use parity_crypto::publickey::{public_to_address, Public};
 use primitives::ServerKeyId;
-use crate::substrate_client::Client;
+use crate::{
+	arguments::{SubstrateArguments, parse_substrate_arguments},
+	subcommands::utils::require_string_arg,
+	substrate_client::Client,
+};
 
 /// All possible SecretStore transactions we support.
 pub enum SecretStoreTransaction {
 	// === Meta calls ===
 
-	/// Change owner.
-//	ChangeOwner(crate::runtime::AccountId),
-	/// Claim id.
-//	ClaimId(Address),
 	/// Claim key.
 	ClaimKey(ServerKeyId),
-	/// Transfer key ownership.
-//	TransferKey(ServerKeyId, Address),
-
-	// === Key Server Set calls ===
-
-	/// Complete key server set initialization.
-//	CompleteInitialization,
-	/// Add key server to the set.
-//	AddKeyServer(KeyServerId, String, u16),
-	/// Update key server from the set.
-//	UpdateKeyServer(KeyServerId, String, u16),
-	/// Remove key server from the set.
-//	UpdateKeyServer(KeyServerId),
 
 	// === Key Server calls ===
 
@@ -58,18 +45,40 @@ pub enum SecretStoreTransaction {
 }
 
 /// Submit Substrate transaction.
+///
+/// By default substrate node in this repository has 4 accounts that have already
+/// claimed required IDs at genesis block:
+///
+/// //Alice:
+/// address: 0x1a642f0e3c3af545e7acbd38b07251b3990914f1
+/// public: 0x1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f70beaf8f588b541507fed6a642c5ab42dfdf8120a7f639de5122d47a69a8e8d1
+/// secret: 0x0101010101010101010101010101010101010101010101010101010101010101
+///
+/// //Bob:
+/// address: 0x5050a4f4b3f9338c3472dcc01a87c76a144b3c9c
+/// public: 0x4d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d07662a3eada2d0fe208b6d257ceb0f064284662e857f57b66b54c198bd310ded36d0
+/// secret: 0x0202020202020202020202020202020202020202020202020202020202020202
+///
+/// //Charlie:
+/// address: 0x3325a78425f17a7e487eb5666b2bfd93abb06c70
+/// public: 0x531fe6068134503d2723133227c867ac8fa6c83c537e9a44c3c5bdbdcb1fe3379e92c265e71e481ba82a84675a47ac705a200fcd524e92d93b0e7386f26a5458
+/// secret: 0x0303030303030303030303030303030303030303030303030303030303030303
+///
+/// //Dave:
+/// address: 0xc48b812bb43401392c037381aca934f4069c0517
+/// public: 0x462779ad4aad39514614751a71085f2f10e1c7a593e4e030efb5b8721ce55b0b199c07969f5442000bea455d72ae826a86bfac9089cb18152ed756ebb2a596f5
+/// secret: 0x0404040404040404040404040404040404040404040404040404040404040404
 pub fn run(matches: &ArgMatches) {
-	let is_wait_mined = true;
-	let is_wait_finalized = true;
-	let is_wait_processed = true;
-	let transaction = match parse_transaction(
-		matches.value_of("sub-call").expect("TODO")
-	) {
+	let is_wait_processed = matches.is_present("wait-processed");
+	let is_wait_finalized = is_wait_processed || matches.is_present("wait-finalized");
+	let is_wait_mined = is_wait_finalized || matches.is_present("wait-mined");
+	let transaction = require_string_arg(matches, "transaction").and_then(parse_transaction);
+	let transaction = match transaction {
 		Ok(transaction) => transaction,
 		Err(error) => {
 			error!(
 				target: "secretstore",
-				"Failed to parse call: {}",
+				"Failed to parse transaction: {}",
 				error,
 			);
 			return;
@@ -78,12 +87,18 @@ pub fn run(matches: &ArgMatches) {
 
 	let mut pool = futures::executor::LocalPool::new();
 
-	let client = pool.run_until(
-		Client::new(
-			"ws://127.0.0.1:9944",
-			crate::runtime::create_transaction_signer("//Alice", None).expect("TODO"),
-		)
-	).expect("TODO");
+	let client = pool.run_until(new_client(parse_substrate_arguments(matches)));
+	let client = match client {
+		Ok(client) => client,
+		Err(error) => {
+			error!(
+				target: "secretstore",
+				"Failed to start substrate client: {}",
+				error,
+			);
+			return;
+		},
+	};
 
 	let result = pool.run_until(
 		process_transaction(
@@ -103,54 +118,69 @@ pub fn run(matches: &ArgMatches) {
 	}
 }
 
+/// Create substrate client.
+async fn new_client(arguments: Result<SubstrateArguments, String>) -> Result<Client, String> {
+	let arguments = arguments?;
+	Client::new(
+		&format!("ws://{}:{}", arguments.sub_host, arguments.sub_port),
+		crate::runtime::create_transaction_signer(
+			&arguments.sub_signer,
+			arguments.sub_signer_password.as_deref(),
+		)?,
+	).await.map_err(|error| format!("{:?}", error))
+}
+
 /// Parse transaction.
 fn parse_transaction(stransaction: &str) -> Result<SecretStoreTransaction, String> {
+	const REGEX_PROOF: &'static str = "regular expression is static and thus is valid; qed";
+	const GROUP_PROOF: &'static str = "regular expression contains group with this index; qed";
+
 	// to claim key, we only need to provide key id
-	let claim_key_regex = regex::Regex::new(r"ClaimKey\((.*)\)").expect("TODO");
+	let claim_key_regex = regex::Regex::new(r"ClaimKey\((.*)\)").expect(REGEX_PROOF);
 	if let Some(captures) = claim_key_regex.captures(stransaction) {
-		let key_id = ServerKeyId::from_str(captures.get(1).expect("TODO").as_str().trim_start_matches("0x"))
+		let key_id = ServerKeyId::from_str(captures.get(1).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
 			.map_err(|err| format!("{}", err))?;
 		return Ok(SecretStoreTransaction::ClaimKey(key_id));
 	}
 
 	// to generate server key, caller must provide: key id and threshold
-	let generate_server_key_regex = regex::Regex::new(r"GenerateServerKey\((.*),[ /t]*(.*)\)").expect("TODO");
+	let generate_server_key_regex = regex::Regex::new(r"GenerateServerKey\((.*),[ /t]*(.*)\)").expect(REGEX_PROOF);
 	if let Some(captures) = generate_server_key_regex.captures(stransaction) {
-		let key_id = ServerKeyId::from_str(captures.get(1).expect("TODO").as_str().trim_start_matches("0x"))
+		let key_id = ServerKeyId::from_str(captures.get(1).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
 			.map_err(|err| format!("{}", err))?;
-		let threshold = u8::from_str(captures.get(2).expect("TODO").as_str().trim_start_matches("0x"))
+		let threshold = u8::from_str(captures.get(2).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
 			.map_err(|err| format!("{}", err))?;
 		return Ok(SecretStoreTransaction::GenerateServerKey(key_id, threshold));
 	}
 
 	// to retrieve server key, caller must provide: key id
-	let retrieve_server_key_regex = regex::Regex::new(r"RetrieveServerKey\((.*)\)").expect("TODO");
+	let retrieve_server_key_regex = regex::Regex::new(r"RetrieveServerKey\((.*)\)").expect(REGEX_PROOF);
 	if let Some(captures) = retrieve_server_key_regex.captures(stransaction) {
-		let key_id = ServerKeyId::from_str(captures.get(1).expect("TODO").as_str().trim_start_matches("0x"))
+		let key_id = ServerKeyId::from_str(captures.get(1).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
 			.map_err(|err| format!("{}", err))?;
 		return Ok(SecretStoreTransaction::RetrieveServerKey(key_id));
 	}
 
 	// to store document key, caller must provide: key id, common point and encrypted point
 	let store_document_key_regex = regex::Regex::new(r"StoreDocumentKey\((.*),[ /t]*(.*),[ /t]*(.*)\)")
-		.expect("TODO");
+		.expect(REGEX_PROOF);
 	if let Some(captures) = store_document_key_regex.captures(stransaction) {
-		let key_id = ServerKeyId::from_str(captures.get(1).expect("TODO").as_str().trim_start_matches("0x"))
+		let key_id = ServerKeyId::from_str(captures.get(1).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
 			.map_err(|err| format!("{}", err))?;
-		let common_point = Public::from_str(captures.get(2).expect("TODO").as_str().trim_start_matches("0x"))
+		let common_point = Public::from_str(captures.get(2).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
 			.map_err(|err| format!("{}", err))?;
-		let encrypted_point = Public::from_str(captures.get(3).expect("TODO").as_str().trim_start_matches("0x"))
+		let encrypted_point = Public::from_str(captures.get(3).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
 			.map_err(|err| format!("{}", err))?;
 		return Ok(SecretStoreTransaction::StoreDocumentKey(key_id, common_point, encrypted_point));
 	}
 
 	// to retrieve document key shadow, caller must provide: key id and its (requester) public key
 	let retrieve_document_key_shadow_regex = regex::Regex::new(r"RetrieveDocumentKeyShadow\((.*),[ /t]*(.*)\)")
-		.expect("TODO");
+		.expect(REGEX_PROOF);
 	if let Some(captures) = retrieve_document_key_shadow_regex.captures(stransaction) {
-		let key_id = ServerKeyId::from_str(captures.get(1).expect("TODO").as_str().trim_start_matches("0x"))
+		let key_id = ServerKeyId::from_str(captures.get(1).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
 			.map_err(|err| format!("{}", err))?;
-		let requester_public = Public::from_str(captures.get(2).expect("TODO").as_str().trim_start_matches("0x"))
+		let requester_public = Public::from_str(captures.get(2).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
 			.map_err(|err| format!("{}", err))?;
 		return Ok(SecretStoreTransaction::RetrieveDocumentKeyShadow(key_id, requester_public));
 	}
@@ -354,8 +384,8 @@ async fn process_transaction(
 							);
 							info!(
 								target: "secretstore",
-								"Finals shadows list: {:?}",
-								shadows,
+								"Final shadows list: {:?}",
+								shadows.iter().map(|x| format!("0x{}", hex::encode(x))).collect::<Vec<_>>(),
 							);
 
 							true

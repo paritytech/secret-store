@@ -19,13 +19,24 @@ use clap::ArgMatches;
 use serde::Deserialize;
 use parity_crypto::publickey::Secret;
 
-/// Program arguments. Read either from CLI arguments, or from configuration file
+/// Default program arguments.
+/// Read either from CLI arguments, or from configuration file.
 #[derive(Debug, PartialEq)]
 pub struct Arguments {
 	pub self_secret: Secret,
 	pub db_path: String,
 	pub net_host: String,
 	pub net_port: u16,
+	pub sub_host: String,
+	pub sub_port: u16,
+	pub sub_signer: String,
+	pub sub_signer_password: Option<String>,
+}
+
+/// Substrate-related arguments. Used by subcommands.
+/// Read either from CLI arguments, or from configuration file.
+#[derive(Debug, PartialEq)]
+pub struct SubstrateArguments {
 	pub sub_host: String,
 	pub sub_port: u16,
 	pub sub_signer: String,
@@ -75,6 +86,7 @@ mod opt_secret {
 pub fn parse_arguments<'a>(
 	matches: &ArgMatches,
 ) -> Result<Arguments, String> {
+	let substrate_arguments = parse_substrate_arguments(matches)?;
 	let toml_arguments: TomlArguments = match matches.value_of("config") {
 		Some(config_file_path) => std::fs::read_to_string(config_file_path)
 			.map_err(|err| format!("{}", err))
@@ -101,6 +113,27 @@ pub fn parse_arguments<'a>(
 			.map(|net_port| u16::from_str(net_port).map_err(|err| format!("{}", err)))
 			.or_else(|| toml_arguments.net_port.clone().map(Ok))
 			.unwrap_or_else(|| Ok(8083))?,
+		sub_host: substrate_arguments.sub_host,
+		sub_port: substrate_arguments.sub_port,
+		sub_signer: substrate_arguments.sub_signer,
+		sub_signer_password: substrate_arguments.sub_signer_password,
+	})
+}
+
+/// Parse command line arguments.
+pub fn parse_substrate_arguments<'a>(
+	matches: &ArgMatches,
+) -> Result<SubstrateArguments, String> {
+	let toml_arguments: TomlArguments = match matches.value_of("config") {
+		Some(config_file_path) => std::fs::read_to_string(config_file_path)
+			.map_err(|err| format!("{}", err))
+			.and_then(|file_contents| toml::from_str(&file_contents)
+				.map_err(|err| format!("{}", err))
+			)?,
+		None => Default::default(),
+	};
+
+	Ok(SubstrateArguments {
 		sub_host: matches.value_of("sub-host")
 			.map(str::to_owned)
 			.or_else(|| toml_arguments.sub_host.clone())

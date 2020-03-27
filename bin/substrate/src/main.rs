@@ -47,8 +47,18 @@ fn main() {
 	let matches = clap_app.get_matches();
 
 	match matches.subcommand() {
-		("sub-submit", Some(sub_submit_matches)) =>
-			return subcommands::submit_transaction::run(sub_submit_matches),
+		("generate-key-pair", Some(generate_key_pair_matches)) =>
+			return subcommands::generate_key_pair::run(generate_key_pair_matches),
+		("generate-document-key", Some(generate_document_key_matches)) =>
+			return subcommands::generate_document_key::run(generate_document_key_matches),
+		("encrypt-message", Some(encrypt_message_matches)) =>
+			return subcommands::encrypt_message::run(encrypt_message_matches),
+		("decrypt-message", Some(decrypt_message_matches)) =>
+			return subcommands::decrypt_message::run(decrypt_message_matches),
+		("shadow-decrypt-message", Some(shadow_decrypt_message_matches)) =>
+			return subcommands::shadow_decrypt_message::run(shadow_decrypt_message_matches),
+		("submit-transaction", Some(submit_transaction_matches)) =>
+			return subcommands::submit_transaction::run(submit_transaction_matches),
 		_ => (),
 	}
 

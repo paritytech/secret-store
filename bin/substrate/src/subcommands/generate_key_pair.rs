@@ -14,10 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
-pub mod decrypt_message;
-pub mod encrypt_message;
-pub mod generate_document_key;
-pub mod generate_key_pair;
-pub mod shadow_decrypt_message;
-pub mod submit_transaction;
-mod utils;
+use clap::ArgMatches;
+use log::info;
+use parity_crypto::publickey::{Generator, Random, public_to_address};
+
+/// Generate Secp256k1 key pair.
+pub fn run(_matches: &ArgMatches) {
+	let key_pair = Random.generate();
+
+	info!(target: "secretstore", "Address: {:?}", public_to_address(key_pair.public()));
+	info!(target: "secretstore", "Public: {:?}", key_pair.public());
+	info!(target: "secretstore", "Secret: {:?}", key_pair.secret());
+}

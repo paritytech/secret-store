@@ -36,7 +36,7 @@ pub use crate::types::{ServerKeyId, RequestSignature, Public,
 	Error, NodeAddress, ClusterConfiguration};
 pub use crate::key_server::KeyServerImpl;
 pub use crate::traits::KeyServer;
-pub use key_server_cluster::message::Message;
+pub use key_server_cluster::{math, message::Message};
 use primitives::{
 	acl_storage::AclStorage,
 	executor::TokioHandle,

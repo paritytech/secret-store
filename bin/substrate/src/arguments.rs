@@ -15,16 +15,28 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::str::FromStr;
+use clap::ArgMatches;
 use serde::Deserialize;
 use parity_crypto::publickey::Secret;
 
-/// Program arguments. Read either from CLI arguments, or from configuration file
+/// Default program arguments.
+/// Read either from CLI arguments, or from configuration file.
 #[derive(Debug, PartialEq)]
 pub struct Arguments {
 	pub self_secret: Secret,
 	pub db_path: String,
 	pub net_host: String,
 	pub net_port: u16,
+	pub sub_host: String,
+	pub sub_port: u16,
+	pub sub_signer: String,
+	pub sub_signer_password: Option<String>,
+}
+
+/// Substrate-related arguments. Used by subcommands.
+/// Read either from CLI arguments, or from configuration file.
+#[derive(Debug, PartialEq)]
+pub struct SubstrateArguments {
 	pub sub_host: String,
 	pub sub_port: u16,
 	pub sub_signer: String,
@@ -72,15 +84,9 @@ mod opt_secret {
 
 /// Parse command line arguments.
 pub fn parse_arguments<'a>(
-	args: Option<Vec<&'a str>>,
+	matches: &ArgMatches,
 ) -> Result<Arguments, String> {
-	let yaml = clap::load_yaml!("cli.yml");
-	let clap_app = clap::App::from_yaml(yaml);
-	let matches = match args {
-		Some(args) => clap_app.get_matches_from(args),
-		None => clap_app.get_matches(),
-	};
-
+	let substrate_arguments = parse_substrate_arguments(matches)?;
 	let toml_arguments: TomlArguments = match matches.value_of("config") {
 		Some(config_file_path) => std::fs::read_to_string(config_file_path)
 			.map_err(|err| format!("{}", err))
@@ -107,6 +113,27 @@ pub fn parse_arguments<'a>(
 			.map(|net_port| u16::from_str(net_port).map_err(|err| format!("{}", err)))
 			.or_else(|| toml_arguments.net_port.clone().map(Ok))
 			.unwrap_or_else(|| Ok(8083))?,
+		sub_host: substrate_arguments.sub_host,
+		sub_port: substrate_arguments.sub_port,
+		sub_signer: substrate_arguments.sub_signer,
+		sub_signer_password: substrate_arguments.sub_signer_password,
+	})
+}
+
+/// Parse command line arguments.
+pub fn parse_substrate_arguments<'a>(
+	matches: &ArgMatches,
+) -> Result<SubstrateArguments, String> {
+	let toml_arguments: TomlArguments = match matches.value_of("config") {
+		Some(config_file_path) => std::fs::read_to_string(config_file_path)
+			.map_err(|err| format!("{}", err))
+			.and_then(|file_contents| toml::from_str(&file_contents)
+				.map_err(|err| format!("{}", err))
+			)?,
+		None => Default::default(),
+	};
+
+	Ok(SubstrateArguments {
 		sub_host: matches.value_of("sub-host")
 			.map(str::to_owned)
 			.or_else(|| toml_arguments.sub_host.clone())
@@ -132,8 +159,10 @@ mod tests {
 
 	#[test]
 	fn arguments_read_some_from_cli() {
+		let yaml = clap::load_yaml!("cli.yml");
+		let clap_app = clap::App::from_yaml(yaml);
 		assert_eq!(
-			parse_arguments(Some(vec![
+			parse_arguments(&clap_app.get_matches_from(vec![
 				"parity-secretstore-substrate",
 				"--self-secret=0101010101010101010101010101010101010101010101010101010101010101",
 				"--net-host=nethost.com",
@@ -155,8 +184,10 @@ mod tests {
 
 	#[test]
 	fn arguments_read_full_from_cli() {
+		let yaml = clap::load_yaml!("cli.yml");
+		let clap_app = clap::App::from_yaml(yaml);
 		assert_eq!(
-			parse_arguments(Some(vec![
+			parse_arguments(&clap_app.get_matches_from(vec![
 				"parity-secretstore-substrate",
 				"--self-secret=0101010101010101010101010101010101010101010101010101010101010101",
 				"--db-path=mydb",
@@ -182,6 +213,8 @@ mod tests {
 
 	#[test]
 	fn arguments_read_some_from_file() {
+		let yaml = clap::load_yaml!("cli.yml");
+		let clap_app = clap::App::from_yaml(yaml);
 		let temp_dir = tempdir::TempDir::new("arguments_read_from_file").unwrap();
 		let temp_file_path = temp_dir.path().join("config.toml");
 		std::fs::File::create(temp_file_path.clone()).unwrap().write_all(r#"
@@ -191,7 +224,7 @@ sub-signer = "//Bob"
 		"#.as_bytes()).unwrap();
 
 		assert_eq!(
-			parse_arguments(Some(vec![
+			parse_arguments(&clap_app.get_matches_from(vec![
 				"parity-secretstore-substrate",
 				"--config",
 				temp_file_path.to_str().unwrap(),
@@ -213,6 +246,8 @@ sub-signer = "//Bob"
 
 	#[test]
 	fn arguments_read_full_from_file() {
+		let yaml = clap::load_yaml!("cli.yml");
+		let clap_app = clap::App::from_yaml(yaml);
 		let temp_dir = tempdir::TempDir::new("arguments_read_from_file").unwrap();
 		let temp_file_path = temp_dir.path().join("config.toml");
 		std::fs::File::create(temp_file_path.clone()).unwrap().write_all(r#"
@@ -227,7 +262,7 @@ sub-signer-password = "password"
 		"#.as_bytes()).unwrap();
 
 		assert_eq!(
-			parse_arguments(Some(vec![
+			parse_arguments(&clap_app.get_matches_from(vec![
 				"parity-secretstore-substrate",
 				"--config",
 				temp_file_path.to_str().unwrap(),
@@ -247,6 +282,8 @@ sub-signer-password = "password"
 
 	#[test]
 	fn arguments_from_cli_overrides_arguments_from_file() {
+		let yaml = clap::load_yaml!("cli.yml");
+		let clap_app = clap::App::from_yaml(yaml);
 		let temp_dir = tempdir::TempDir::new("arguments_read_from_file").unwrap();
 		let temp_file_path = temp_dir.path().join("config.toml");
 		std::fs::File::create(temp_file_path.clone()).unwrap().write_all(r#"
@@ -254,7 +291,7 @@ self-secret = "0202020202020202020202020202020202020202020202020202020202020202"
 		"#.as_bytes()).unwrap();
 
 		assert_eq!(
-			parse_arguments(Some(vec![
+			parse_arguments(&clap_app.get_matches_from(vec![
 				"parity-secretstore-substrate",
 				"--config",
 				temp_file_path.to_str().unwrap(),

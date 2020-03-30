@@ -48,3 +48,136 @@ args:
         value_name: SUB_SIGNER_PASSWORD
         help: The password for the SURI of secret key to use when transactions are submitted to the Substrate node. Empty by default.
         takes_value: true
+subcommands:
+    - submit-transaction:
+        about: Submit Substrate transaction.
+        args:
+            - sub-host:
+                long: sub-host
+                value_name: SUB_HOST
+                help: Connect to Substrate node at given host. "localhost" by default.
+                takes_value: true
+            - sub-port:
+                long: sub-port
+                value_name: SUB_PORT
+                help: Connect to Substrate node at given port. 9944 by default.
+                takes_value: true
+            - sub-signer:
+                long: sub-signer
+                value_name: SUB_SIGNER
+                help: The SURI of secret key to use when transactions are submitted to the Substrate node. "//Alice" by default.
+                takes_value: true
+            - sub-signer-password:
+                long: sub-signer-password
+                value_name: SUB_SIGNER_PASSWORD
+                help: The password for the SURI of secret key to use when transactions are submitted to the Substrate node. Empty by default.
+                takes_value: true
+            - transaction:
+                long: transaction
+                value_name: TRANSACTION
+                help: Transaction to be submitted. Refer to SecretStoreTransaction enum for details.
+                takes_value: true
+                required: true
+            - wait-mined:
+                long: wait-mined
+                help: Wait until transaction is included in the block.
+            - wait-finalized:
+                long: wait-finalized
+                help: Wait until block with transaction is finalized. Assumes wait-mined.
+            - wait-processed:
+                long: wait-processed
+                help: Wait until transaction is processed by SecretStore (if applicable). Assumes wait-finalized.
+    - generate-key-pair:
+        about: Generate key pair.
+    - generate-document-key:
+        about: Generate document key.
+        args:
+            - server-key:
+                long: server-key
+                value_name: SERVER_KEY
+                help: Hex-encoded server public key.
+                takes_value: true
+                required: true
+            - author-key:
+                long: author-key
+                value_name: AUTHOR_KEY
+                help: Hex-encoded author public key.
+                takes_value: true
+                required: true
+    - encrypt-message:
+        about: Encrypt message using encrypted document key.
+        args:
+            - encrypted-document-key:
+                long: encrypted-document-key
+                value_name: ENCRYPTED_DOCUMENT_KEY
+                help: Hex-encoded encrypted document key.
+                takes_value: true
+                required: true
+            - author-secret:
+                long: author-secret
+                value_name: AUTHOR_SECRET
+                help: Hex-encoded author secret key.
+                takes_value: true
+                required: true
+            - message:
+                long: message
+                value_name: MESSAGE
+                help: Arbitrary message string.
+                takes_value: true
+                required: true
+    - decrypt-message:
+        about: Decrypt message using encrypted document key.
+        args:
+            - encrypted-document-key:
+                long: encrypted-document-key
+                value_name: ENCRYPTED_DOCUMENT_KEY
+                help: Hex-encoded encrypted document key.
+                takes_value: true
+                required: true
+            - requester-secret:
+                long: requester-secret
+                value_name: REQUESTER_SECRET
+                help: Hex-encoded requester secret key.
+                takes_value: true
+                required: true
+            - encrypted-message:
+                long: encrypted-message
+                value_name: ENCRYPTED_MESSAGE
+                help: Hex-encoded encrypted message.
+                takes_value: true
+                required: true
+    - shadow-decrypt-message:
+        about: Decrypt message using document key shadow.
+        args:
+            - common-point:
+                long: common-point
+                value_name: COMMON_POINT
+                help: Hex-encoded common point that has been used during document key generation.
+                takes_value: true
+                required: true
+            - decrypted-secret:
+                long: decrypted-secret
+                value_name: DECRYPTED_SECRET
+                help: Hex-encoded partially decrypted document key.
+                takes_value: true
+                required: true
+            - decrypt-shadows:
+                long: decrypt-shadows
+                value_name: DECRYPT_SHADOW
+                help: Hex-encoded decryption shadows.
+                takes_value: true
+                required: true
+                multiple: true
+                min_values: 1
+            - requester-secret:
+                long: requester-secret
+                value_name: REQUESTER_SECRET
+                help: Hex-encoded requester secret key.
+                takes_value: true
+                required: true
+            - encrypted-message:
+                long: encrypted-message
+                value_name: ENCRYPTED_MESSAGE
+                help: Hex-encoded encrypted message.
+                takes_value: true
+                required: true

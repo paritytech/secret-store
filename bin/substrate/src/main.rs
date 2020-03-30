@@ -23,6 +23,7 @@ mod key_server;
 mod key_server_set;
 mod runtime;
 mod service;
+mod subcommands;
 mod substrate_client;
 mod transaction_pool;
 
@@ -41,7 +42,27 @@ use primitives::{
 fn main() {
 	initialize();
 
-	let arguments = match arguments::parse_arguments(None) {
+	let yaml = clap::load_yaml!("cli.yml");
+	let clap_app = clap::App::from_yaml(yaml);
+	let matches = clap_app.get_matches();
+
+	match matches.subcommand() {
+		("generate-key-pair", Some(generate_key_pair_matches)) =>
+			return subcommands::generate_key_pair::run(generate_key_pair_matches),
+		("generate-document-key", Some(generate_document_key_matches)) =>
+			return subcommands::generate_document_key::run(generate_document_key_matches),
+		("encrypt-message", Some(encrypt_message_matches)) =>
+			return subcommands::encrypt_message::run(encrypt_message_matches),
+		("decrypt-message", Some(decrypt_message_matches)) =>
+			return subcommands::decrypt_message::run(decrypt_message_matches),
+		("shadow-decrypt-message", Some(shadow_decrypt_message_matches)) =>
+			return subcommands::shadow_decrypt_message::run(shadow_decrypt_message_matches),
+		("submit-transaction", Some(submit_transaction_matches)) =>
+			return subcommands::submit_transaction::run(submit_transaction_matches),
+		_ => (),
+	}
+
+	let arguments = match arguments::parse_arguments(&matches) {
 		Ok(arguments) => arguments,
 		Err(error) => {
 			error!(

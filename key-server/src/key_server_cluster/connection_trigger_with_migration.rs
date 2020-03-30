@@ -195,7 +195,10 @@ impl<NetworkAddress: Clone + Send + Sync + 'static> ConnectionTrigger<NetworkAdd
 	//				data.set_servers_set(server_set.current_set.clone());
 				},
 				ConnectionsAction::ConnectToMigrationSet => {
-					self.snapshot.migration.as_ref().map(|s| s.set.clone()).unwrap_or_default()
+					self.snapshot.migration
+						.as_ref()
+						.map(|s| s.set.clone())
+						.unwrap_or_else(|| self.snapshot.current_set.clone())
 					//adjust_connections(&self.self_key_pair.address(), data, &migration_set);
 				},
 			})
@@ -332,7 +335,13 @@ fn session_state(session: Option<Arc<AdminSession>>) -> SessionState {
 		.unwrap_or(SessionState::Idle)
 }
 
-fn maintain_session<NetworkAddress>(self_node_id: &NodeId, connected: &BTreeSet<NodeId>, snapshot: &KeyServerSetSnapshot<NetworkAddress>, migration_state: MigrationState, session_state: SessionState) -> Option<SessionAction> {
+fn maintain_session<NetworkAddress>(
+	self_node_id: &NodeId,
+	connected: &BTreeSet<NodeId>,
+	snapshot: &KeyServerSetSnapshot<NetworkAddress>,
+	migration_state: MigrationState,
+	session_state: SessionState,
+) -> Option<SessionAction> {
 	let migration_data_proof = "migration_state is Started; migration data available when started; qed";
 
 	match (migration_state, session_state) {

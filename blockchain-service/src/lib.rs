@@ -21,7 +21,7 @@ use std::{
 	time::{Duration, Instant},
 };
 use futures::{future::{ready, Either}, FutureExt, Stream, StreamExt};
-use log::{error, warn};
+use log::{error, info, trace, warn};
 use parking_lot::RwLock;
 use ethereum_types::{U256, BigEndianHash};
 
@@ -55,7 +55,7 @@ pub enum BlockchainServiceTask {
 }
 
 /// Block API.
-pub trait Block: Send + Sync {
+pub trait Block: std::fmt::Display + Send + Sync {
 	/// Stream that returns new tasks of this block.
 	type NewTasksStream: Stream<Item = BlockchainServiceTask> + Send;
 	/// Stream that returns pending tasks.
@@ -279,13 +279,20 @@ async fn process_new_block<B, E, TP, KSrv, KStr>(
 		KSrv: KeyServer,
 		KStr: KeyStorage,
 {
+	// we'll trace this block anyway => format it in advance (to avoid 'static + futures mess)
+	let sblock = format!("{}", block);
+
 	// we need to know current key servers set to distribute tasks among nodes
 	let current_set = block.current_key_servers_set().await;
 
 	// if we are not a part of key server set, ignore all tasks
 	if !current_set.contains(&environment.self_id) {
+		trace!(target: "secretstore", "Isolated at block: {}", sblock);
 		return;
 	}
+
+	// do not want too much spam in logs => trace
+	trace!(target: "secretstore", "Processing new tasks at block: {}", sblock);
 
 	// first, process new tasks
 	let max_active_sessions = config.max_active_sessions.unwrap_or(std::usize::MAX);
@@ -294,6 +301,7 @@ async fn process_new_block<B, E, TP, KSrv, KStr>(
 		&environment,
 		&service_data,
 		&current_set,
+		&sblock,
 		block.new_tasks(),
 	).await;
 
@@ -306,11 +314,14 @@ async fn process_new_block<B, E, TP, KSrv, KStr>(
 		};
 		
 		if restart_required {
+			info!(target: "secretstore", "Processing pending tasks at block: {}", sblock);
+
 			process_tasks(
 				max_active_sessions,
 				&environment,
 				&service_data,
 				&current_set,
+				&sblock,
 				block.pending_tasks(),
 			).await;
 
@@ -331,6 +342,7 @@ async fn process_tasks<E, TP, KSrv, KStr>(
 	environment: &Arc<Environment<E, TP, KSrv, KStr>>,
 	service_data: &Arc<RwLock<ServiceData>>,
 	current_set: &BTreeSet<KeyServerId>,
+	block: &str,
 	new_tasks: impl Stream<Item = BlockchainServiceTask>,
 )
 	where
@@ -346,6 +358,7 @@ async fn process_tasks<E, TP, KSrv, KStr>(
 			environment,
 			service_data,
 			current_set,
+			block,
 			new_task,
 		);
 
@@ -361,6 +374,7 @@ fn process_task<E, TP, KSrv, KStr>(
 	environment: &Arc<Environment<E, TP, KSrv, KStr>>,
 	service_data: &Arc<RwLock<ServiceData>>,
 	current_set: &BTreeSet<KeyServerId>,
+	block: &str,
 	task: BlockchainServiceTask,
 ) -> Option<impl Future<Output = ()>> where
 	E: Executor,
@@ -372,7 +386,7 @@ fn process_task<E, TP, KSrv, KStr>(
 		BlockchainServiceTask::Regular(origin, ServiceTask::GenerateServerKey(key_id, requester, threshold)) => {
 			let mut service_data_lock = service_data.write();
 			let locked_service_data = &mut *service_data_lock;
-			if !filter_task(
+			if let Err(error) = filter_task(
 				locked_service_data.active_sessions(),
 				max_active_sessions,
 				&current_set,
@@ -381,8 +395,26 @@ fn process_task<E, TP, KSrv, KStr>(
 				Some(&mut locked_service_data.server_key_generation_sessions),
 				&mut locked_service_data.recent_server_key_generation_sessions,
 			) {
+				info!(
+					target: "secretstore",
+					"Ignoring task GenerateServerKey({}, {}, {}) at block {} because: {:?}",
+					key_id,
+					requester,
+					threshold,
+					block,
+					error,
+				);
 				return None;
 			}
+
+			info!(
+				target: "secretstore",
+				"Starting task GenerateServerKey({}, {}, {}) at block {}",
+				key_id,
+				requester,
+				threshold,
+				block,
+			);
 
 			let future_environment = environment.clone();
 			let future_service_data = service_data.clone();
@@ -395,12 +427,12 @@ fn process_task<E, TP, KSrv, KStr>(
 					})
 			))
 		},
-		BlockchainServiceTask::Regular(origin, ServiceTask::RetrieveServerKey(key_id, _requester)) => {
+		BlockchainServiceTask::Regular(origin, ServiceTask::RetrieveServerKey(key_id, requester)) => {
 			// in blockchain services we ignore requesters for RetrieveServerKey requests
 			// (i.e. public portion of server key is available to anyone)
 			let mut service_data_lock = service_data.write();
 			let locked_service_data = &mut *service_data_lock;
-			if !filter_task(
+			if let Err(error) = filter_task(
 				locked_service_data.active_sessions(),
 				max_active_sessions,
 				&current_set,
@@ -409,8 +441,24 @@ fn process_task<E, TP, KSrv, KStr>(
 				None,
 				&mut locked_service_data.recent_server_key_retrieval_sessions,
 			) {
+				info!(
+					target: "secretstore",
+					"Ignoring task RetrieveServerKey({}, {:?}) at block {} because: {:?}",
+					key_id,
+					requester,
+					block,
+					error,
+				);
 				return None;
 			}
+
+			info!(
+				target: "secretstore",
+				"Starting task RetrieveServerKey({}, {:?}) at block {}",
+				key_id,
+				requester,
+				block,
+			);
 
 			let future_environment = environment.clone();
 			Some(Either::Right(Either::Left(
@@ -454,7 +502,7 @@ fn process_task<E, TP, KSrv, KStr>(
 		) => {
 			let mut service_data_lock = service_data.write();
 			let locked_service_data = &mut *service_data_lock;
-			if !filter_task(
+			if let Err(error) = filter_task(
 				locked_service_data.active_sessions(),
 				max_active_sessions,
 				&current_set,
@@ -463,9 +511,24 @@ fn process_task<E, TP, KSrv, KStr>(
 				None,
 				&mut locked_service_data.recent_document_key_store_sessions,
 			) {
+				info!(
+					target: "secretstore",
+					"Ignoring task StoreDocumentKey({}, {}) at block {} because: {:?}",
+					key_id,
+					author,
+					block,
+					error,
+				);
 				return None;
 			}
 
+			info!(
+				target: "secretstore",
+				"Starting task StoreDocumentKey({}, {}) at block {}",
+				key_id,
+				author,
+				block,
+			);
 
 			let future_environment = environment.clone();
 			Some(Either::Right(Either::Right(Either::Left(
@@ -514,7 +577,7 @@ fn process_task<E, TP, KSrv, KStr>(
 		BlockchainServiceTask::RetrieveShadowDocumentKeyCommon(origin, key_id, requester) => {
 			let mut service_data_lock = service_data.write();
 			let locked_service_data = &mut *service_data_lock;
-			if !filter_document_task(
+			if let Err(error) = filter_document_task(
 				locked_service_data.active_sessions(),
 				max_active_sessions,
 				&current_set,
@@ -524,8 +587,24 @@ fn process_task<E, TP, KSrv, KStr>(
 				Some(&mut locked_service_data.document_key_common_retrieval_sessions),
 				&mut locked_service_data.recent_document_key_common_retrieval_sessions,
 			) {
+				info!(
+					target: "secretstore",
+					"Ignoring task RetrieveShadowDocumentKeyCommon({}, {}) at block {} because: {:?}",
+					key_id,
+					requester,
+					block,
+					error,
+				);
 				return None;
 			}
+
+				info!(
+					target: "secretstore",
+					"Starting task RetrieveShadowDocumentKeyCommon({}, {}) at block {}",
+					key_id,
+					requester,
+					block,
+				);
 
 			let future_environment = environment.clone();
 			let future_service_data = service_data.clone();
@@ -579,7 +658,7 @@ fn process_task<E, TP, KSrv, KStr>(
 		BlockchainServiceTask::RetrieveShadowDocumentKeyPersonal(origin, key_id, requester) => {
 			let mut service_data_lock = service_data.write();
 			let locked_service_data = &mut *service_data_lock;
-			if !filter_document_task(
+			if let Err(error) = filter_document_task(
 				locked_service_data.active_sessions(),
 				max_active_sessions,
 				&current_set,
@@ -589,8 +668,24 @@ fn process_task<E, TP, KSrv, KStr>(
 				Some(&mut locked_service_data.document_key_personal_retrieval_sessions),
 				&mut locked_service_data.recent_document_key_personal_retrieval_sessions,
 			) {
+				info!(
+					target: "secretstore",
+					"Ignoring task RetrieveShadowDocumentKeyPersonal({}, {}) at block {} because: {:?}",
+					key_id,
+					requester,
+					block,
+					error,
+				);
 				return None;
 			}
+
+			info!(
+				target: "secretstore",
+				"Starting task RetrieveShadowDocumentKeyPersonal({}, {}) at block {}",
+				key_id,
+				requester,
+				block,
+			);
 
 			let future_environment = environment.clone();
 			let future_service_data = service_data.clone();
@@ -646,6 +741,19 @@ fn log_fatal_secret_store_error(request_type: &str, error: Error) {
 	);
 }
 
+/// Filter task result.
+#[derive(Debug)]
+enum SkipReason {
+	/// There are too much active sessions to start this task.
+	TooMuchActiveSessions,
+	/// This task must be started by another key server.
+	NotMyTask,
+	/// This task has been processed recently.
+	HasBeenProcessedRecently,
+	/// This task is processed currently.
+	IsActive,
+}
+
 /// Returns true when session, related to `server_key_id` could be started now.
 fn filter_task(
 	total_active_sessions: usize,
@@ -655,29 +763,29 @@ fn filter_task(
 	server_key_id: &ServerKeyId,
 	active_sessions: Option<&mut HashSet<ServerKeyId>>,
 	recent_sessions: &mut HashSet<ServerKeyId>,
-) -> bool {
+) -> Result<(), SkipReason> {
 	// ignore if there's already too many session started by this service
 	if total_active_sessions >= max_active_sessions {
-		return false;
+		return Err(SkipReason::TooMuchActiveSessions);
 	}
 	// check if task mus be procesed by another node
 	if let Some(self_id) = self_id {
 		if !is_processed_by_this_key_server(current_set, self_id, server_key_id) {
-			return false;
+			return Err(SkipReason::NotMyTask);
 		}
 	}
 	// check if task has been completed recently
 	if !recent_sessions.insert(*server_key_id) {
-		return false;
+		return Err(SkipReason::HasBeenProcessedRecently);
 	}
 	// check if task is currently processed
 	if let Some(active_sessions) = active_sessions {
 		if !active_sessions.insert(*server_key_id) {
-			return false;
+			return Err(SkipReason::IsActive);
 		}
 	}
 
-	true
+	Ok(())
 }
 
 /// Returns true when session, related to both `server_key_id` and `requester` could be started now.
@@ -690,29 +798,29 @@ fn filter_document_task(
 	requester: &Requester,
 	active_sessions: Option<&mut HashSet<(ServerKeyId, Requester)>>,
 	recent_sessions: &mut HashSet<(ServerKeyId, Requester)>,
-) -> bool {
+) -> Result<(), SkipReason> {
 	// ignore if there's already too many session started by this service
 	if total_active_sessions >= max_active_sessions {
-		return false;
+		return Err(SkipReason::TooMuchActiveSessions);
 	}
 	// check if task mus be procesed by another node
 	if let Some(self_id) = self_id {
 		if !is_processed_by_this_key_server(current_set, self_id, server_key_id) {
-			return false;
+			return Err(SkipReason::NotMyTask);
 		}
 	}
 	// check if task has been completed recently
 	if !recent_sessions.insert((*server_key_id, requester.clone())) {
-		return false;
+		return Err(SkipReason::HasBeenProcessedRecently);
 	}
 	// check if task is currently processed
 	if let Some(active_sessions) = active_sessions {
 		if !active_sessions.insert((*server_key_id, requester.clone())) {
-			return false;
+			return Err(SkipReason::IsActive);
 		}
 	}
 
-	true
+	Ok(())
 }
 
 /// Returns true when session, related to `server_key_id` must be started by this node.
@@ -923,6 +1031,12 @@ mod tests {
 		key_servers_set: BTreeSet<KeyServerId>,
 		new_tasks: Vec<BlockchainServiceTask>,
 		pending_tasks: Vec<BlockchainServiceTask>,
+	}
+
+	impl std::fmt::Display for TestBlock {
+		fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+			write!(f, "TestBlock")
+		}
 	}
 
 	impl Block for TestBlock {

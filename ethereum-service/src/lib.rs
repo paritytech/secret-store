@@ -191,6 +191,12 @@ pub async fn start_service<B, E, TP, KSrv, KStr, LR>(
 	).await
 }
 
+impl<B: Blockchain> std::fmt::Display for EthereumBlock<B> {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+		write!(f, "{}", self.block.hash)
+	}
+}
+
 impl<B: Blockchain> blockchain_service::Block for EthereumBlock<B> {
 	type NewTasksStream = Pin<Box<dyn Stream<Item = BlockchainServiceTask> + Send>>;
 	type PendingTasksStream = Pin<Box<dyn Stream<Item = BlockchainServiceTask> + Send>>;

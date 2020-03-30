@@ -82,7 +82,7 @@ pub enum SecretStoreCall {
 /// Substrate blockchain.
 pub trait Blockchain: 'static + Send + Sync {
 	/// Block hash type.
-	type BlockHash: Clone + Send + Sync;
+	type BlockHash: Clone + std::fmt::Debug + Send + Sync;
 	/// Blockchain event type.
 	type Event: MaybeSecretStoreEvent + Send;
 	/// Block events stream type.
@@ -224,6 +224,12 @@ pub fn start_service<B, E, TP, KSrv, KStr>(
 		.boxed()
 	);
 	Ok(())
+}
+
+impl<B: Blockchain> std::fmt::Display for SubstrateBlock<B> {
+	fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+		write!(f, "{:?}", self.block_hash)
+	}
 }
 
 impl<B: Blockchain> blockchain_service::Block for SubstrateBlock<B> {

@@ -51,7 +51,7 @@ pub fn start(
 		Configuration {
 			self_id: key_server_key_pair.address(),
 			max_active_sessions: Some(4),
-			pending_restart_interval: Some(Duration::from_secs(10 * 60)),
+			pending_restart_interval: Some(Duration::from_secs(3 * 60)),
 		},
 		new_blocks_stream,
 	)

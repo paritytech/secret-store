@@ -31,6 +31,8 @@ use primitives::{
 };
 use crate::substrate_client::{BlockRef, Client};
 
+/// Number of blocks before the new migration transaction will be retried.
+const TRANSACTION_RETRY_INTERVAL_BLOCKS_HALF: u32 = TRANSACTION_RETRY_INTERVAL_BLOCKS / 2;
 /// Number of blocks before the same-migration transaction (be it start or confirmation) will be retried.
 const TRANSACTION_RETRY_INTERVAL_BLOCKS: u32 = 30;
 
@@ -205,8 +207,15 @@ fn update_last_transaction_block(
 	match previous_transaction.as_ref() {
 		// no previous transaction => send immediately
 		None => (),
-		// previous transaction has been sent for other migration process => send immediately
-		Some(tx) if tx.migration_id != *migration_id => (),
+		// previous transaction has been sent for other migration process
+		// => maybe the trigger has trying to generate another migration id, but previous
+		// transaction is still in the wild, not mined
+		// => let's wait for some (smaller) time
+		Some(tx) if tx.migration_id != *migration_id => {
+			if tx.block.0 > best_block.0 || best_block.0 - tx.block.0 < TRANSACTION_RETRY_INTERVAL_BLOCKS_HALF {
+				return false;
+			}
+		},
 		// if we have sent the same type of transaction recently => do nothing (hope it will be mined eventually)
 		// if we have sent the same transaction some time ago =>
 		//   assume that our tx queue was full

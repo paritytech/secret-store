@@ -18,7 +18,7 @@ use std::{collections::HashMap, str::FromStr};
 use clap::ArgMatches;
 use log::{error, info};
 use parity_crypto::publickey::{Address, Public, public_to_address};
-use primitives::ServerKeyId;
+use primitives::{KeyServerId, ServerKeyId};
 use crate::{
 	arguments::{SubstrateArguments, parse_substrate_arguments},
 	subcommands::utils::require_string_arg,
@@ -33,6 +33,15 @@ pub enum SecretStoreTransaction {
 	ClaimKey(ServerKeyId),
 	/// Transfer key ownership.
 	TransferKey(ServerKeyId, Address),
+
+	// === Key Server Set calls ===
+
+	/// Add key server to the set.
+	AddKeyServer(KeyServerId, String),
+	/// Remove key server from the set.
+	RemoveKeyServer(KeyServerId),
+	/// Update key server in the set.
+	UpdateKeyServer(KeyServerId, String),
 
 	// === Key Server calls ===
 
@@ -155,6 +164,32 @@ fn parse_transaction(stransaction: &str) -> Result<SecretStoreTransaction, Strin
 		return Ok(SecretStoreTransaction::TransferKey(key_id, new_owner));
 	}
 
+	// to add key server, we need to provide: key server id and network address
+	let add_key_server_regex = regex::Regex::new(r"AddKeyServer\((.*),[ /t]*(.*)\)").expect(REGEX_PROOF);
+	if let Some(captures) = add_key_server_regex.captures(stransaction) {
+		let key_server_id = KeyServerId::from_str(captures.get(1).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
+			.map_err(|err| format!("{}", err))?;
+		let key_server_address = captures.get(2).expect(GROUP_PROOF).as_str().into();
+		return Ok(SecretStoreTransaction::AddKeyServer(key_server_id, key_server_address));
+	}
+
+	// to remove key server, we need to provide: key server id and network address
+	let remove_key_server_regex = regex::Regex::new(r"RemoveKeyServer\((.*)\)").expect(REGEX_PROOF);
+	if let Some(captures) = remove_key_server_regex.captures(stransaction) {
+		let key_server_id = KeyServerId::from_str(captures.get(1).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
+			.map_err(|err| format!("{}", err))?;
+		return Ok(SecretStoreTransaction::RemoveKeyServer(key_server_id));
+	}
+
+	// to add key server, we need to provide: key server id and network address
+	let update_key_server_regex = regex::Regex::new(r"UpdateKeyServer\((.*),[ /t]*(.*)\)").expect(REGEX_PROOF);
+	if let Some(captures) = update_key_server_regex.captures(stransaction) {
+		let key_server_id = KeyServerId::from_str(captures.get(1).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
+			.map_err(|err| format!("{}", err))?;
+		let key_server_address = captures.get(2).expect(GROUP_PROOF).as_str().into();
+		return Ok(SecretStoreTransaction::UpdateKeyServer(key_server_id, key_server_address));
+	}
+
 	// to generate server key, caller must provide: key id and threshold
 	let generate_server_key_regex = regex::Regex::new(r"GenerateServerKey\((.*),[ /t]*(.*)\)").expect(REGEX_PROOF);
 	if let Some(captures) = generate_server_key_regex.captures(stransaction) {
@@ -229,6 +264,48 @@ async fn process_transaction(
 			crate::runtime::SecretStoreCall::transfer_key(id, new_owner),
 			|_| true,
 			|_| true,
+		).await,
+		SecretStoreTransaction::AddKeyServer(key_server_id, key_server_address) => process_generic_transaction(
+			&client,
+			is_wait_mined,
+			is_wait_finalized,
+			is_wait_processed,
+			crate::runtime::SecretStoreCall::add_key_server(key_server_id, key_server_address.as_bytes().to_vec()),
+			move |event| match *event {
+				crate::runtime::Event::secretstore_runtime_module(
+					runtime_module::Event::KeyServerAdded(req_id),
+				) if req_id == key_server_id => true,
+				_ => false,
+			},
+			find_migration_responses,
+		).await,
+		SecretStoreTransaction::RemoveKeyServer(key_server_id) => process_generic_transaction(
+			&client,
+			is_wait_mined,
+			is_wait_finalized,
+			is_wait_processed,
+			crate::runtime::SecretStoreCall::remove_key_server(key_server_id),
+			move |event| match *event {
+				crate::runtime::Event::secretstore_runtime_module(
+					runtime_module::Event::KeyServerRemoved(req_id),
+				) if req_id == key_server_id => true,
+				_ => false,
+			},
+			find_migration_responses,
+		).await,
+		SecretStoreTransaction::UpdateKeyServer(key_server_id, key_server_address) => process_generic_transaction(
+			&client,
+			is_wait_mined,
+			is_wait_finalized,
+			is_wait_processed,
+			crate::runtime::SecretStoreCall::update_key_server(key_server_id, key_server_address.as_bytes().to_vec()),
+			move |event| match *event {
+				crate::runtime::Event::secretstore_runtime_module(
+					runtime_module::Event::KeyServerUpdated(req_id),
+				) if req_id == key_server_id => true,
+				_ => false,
+			},
+			find_migration_responses,
 		).await,
 		SecretStoreTransaction::GenerateServerKey(id, threshold) => process_generic_transaction(
 			&client,
@@ -437,6 +514,25 @@ async fn process_transaction(
 	}
 }
 
+/// Find migration responses.
+fn find_migration_responses(event: &crate::runtime::Event) -> bool {
+	match *event {
+		crate::runtime::Event::secretstore_runtime_module(
+			runtime_module::Event::MigrationStarted
+		) => {
+			info!(target: "secretstore", "Migration has started");
+			false
+		},
+		crate::runtime::Event::secretstore_runtime_module(
+			runtime_module::Event::MigrationCompleted
+		) => {
+			info!(target: "secretstore", "Migration has completed");
+			true
+		},
+		_ => false,
+	}
+}
+
 /// Process single generic transaction.
 async fn process_generic_transaction(
 	client: &Client,
@@ -471,6 +567,10 @@ async fn process_generic_transaction(
 			&mut find_request,
 		).await?;
 	}
+
+	// sometimes (because of bug?) if there are two active subscriptions
+	drop(transaction_stream);
+
 	// wait until transaction block is finalized
 	if is_wait_finalized {
 		wait_finalized(
@@ -479,6 +579,10 @@ async fn process_generic_transaction(
 			&mut find_request,
 		).await?;
 	}
+
+	// sometimes (because of bug?) if there are two active subscriptions
+	drop(finalized_headers_stream);
+
 	// wait until request is processed
 	if is_wait_processed {
 		wait_processed(
@@ -497,7 +601,6 @@ async fn wait_accepted(
 ) -> Result<(), String> {
 	loop {
 		let status = stream.next().await;
-		//trace_transaction_status(&status);
 		match status {
 			crate::runtime::TransactionStatus::Ready => {
 				info!(
@@ -523,7 +626,6 @@ async fn wait_mined(
 ) -> Result<(), String> {
 	loop {
 		let status = stream.next().await;
-		//trace_transaction_status(&status);
 		match status {
 			crate::runtime::TransactionStatus::InBlock(block_hash) => {
 				match filter_block_events(client, block_hash, filter_event).await? {

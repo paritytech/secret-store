@@ -592,11 +592,11 @@ impl<T: Trait> Module<T> {
 					.expect("every key from DocumentKeyStoreRequestsKeys has corresponding
 						entry in DocumentKeyStoreRequests; qed");
 				match request.threshold.is_some() {
-					true => primitives::service::ServiceTask::RetrieveShadowDocumentKeyCommon(
+					false => primitives::service::ServiceTask::RetrieveShadowDocumentKeyCommon(
 						key_id,
 						requester,
 					),
-					false => primitives::service::ServiceTask::RetrieveShadowDocumentKeyPersonal(
+					true => primitives::service::ServiceTask::RetrieveShadowDocumentKeyPersonal(
 						key_id,
 						request.requester_public,
 					),

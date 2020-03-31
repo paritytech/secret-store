@@ -385,13 +385,13 @@ decl_storage! {
 
 		/// Current key servers set. This is the set of key servers that are running key server
 		/// operations at this moment.
-		CurrentKeyServers: linked_map hasher(blake2_128_concat) KeyServerId => Option<KeyServer>;
+		CurrentKeyServers: map hasher(blake2_128_concat) KeyServerId => Option<KeyServer>;
 		/// Migration key servers set. That is the set of key servers we are currently migrating
 		/// to from current set.
-		MigrationKeyServers: linked_map hasher(blake2_128_concat) KeyServerId => Option<KeyServer>;
+		MigrationKeyServers: map hasher(blake2_128_concat) KeyServerId => Option<KeyServer>;
 		/// New key servers set. That is the set of key servers we will be migrating to in
 		/// the future.
-		NewKeyServers: linked_map hasher(blake2_128_concat) KeyServerId => Option<KeyServer>;
+		NewKeyServers: map hasher(blake2_128_concat) KeyServerId => Option<KeyServer>;
 		/// ID and the 'master' server of current migration process. ID is used to distinguish
 		/// confirmations of different migrations. Master is the key server which starts
 		/// auto-migration session.
@@ -425,7 +425,8 @@ decl_storage! {
 		/// entry in ServerKeyRetrievalRequests.
 		ServerKeyRetrievalRequestsKeys: Vec<ServerKeyId>;
 		/// All active server key retrieval requests.
-		ServerKeyRetrievalRequests: map hasher(blake2_256) ServerKeyId
+		ServerKeyRetrievalRequests: map
+			hasher(blake2_128_concat) ServerKeyId
 			=> Option<ServerKeyRetrievalRequest<<T as frame_system::Trait>::BlockNumber>>;
 		/// Reported server keys.
 		ServerKeyRetrievalResponses: double_map

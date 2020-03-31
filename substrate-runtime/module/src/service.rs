@@ -17,7 +17,10 @@
 //! Common methods for all services.
 
 use frame_system::ensure_signed;
-use frame_support::{traits::{Currency, ExistenceRequirement}, StorageValue, StorageMap, StorageDoubleMap, StorageLinkedMap};
+use frame_support::{
+	traits::{Currency, ExistenceRequirement},
+	IterableStorageMap, StorageValue, StorageMap, StorageDoubleMap,
+};
 use primitives::{KeyServerId, KeyServersMask};
 use sp_std::vec::Vec;
 use super::{
@@ -95,7 +98,7 @@ impl<T: Trait> SecretStoreService<T> {
 
 	/// Return number of key servers in the current set.
 	pub fn key_servers_count() -> Result<u8, &'static str> {
-		Ok(CurrentKeyServers::enumerate().count() as u8) // TODO: optimize?
+		Ok(CurrentKeyServers::iter().count() as u8) // TODO: optimize?
 	}
 
 	/// Get key server index from call origin.
@@ -114,7 +117,7 @@ impl<T: Trait> SecretStoreService<T> {
 
 	/// Deposit equal share of amount to each of key servers.
 	pub fn collect_service_fee(origin: &T::AccountId, fee: BalanceOf<T>) -> Result<(), &'static str> {
-		let key_servers_accounts = CurrentKeyServers::enumerate()
+		let key_servers_accounts = CurrentKeyServers::iter()
 			.map(|(id, _)| id)
 			.map(|id| ClaimedBy::<T>::get(&id).ok_or("key server has not claimed id"))
 			.collect::<Result<Vec<_>, _>>()?;

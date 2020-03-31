@@ -15,7 +15,7 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use codec::{Encode, Decode};
-use frame_support::{StorageLinkedMap, StorageValue, StorageMap, ensure};
+use frame_support::{IterableStorageMap, StorageValue, StorageMap, ensure};
 use frame_system::ensure_signed;
 use sp_std::{
 	collections::btree_map::BTreeMap,
@@ -177,14 +177,14 @@ impl<M> Default for RuntimeStorage<M> {
 }
 
 impl<M> Storage for RuntimeStorage<M> where
-	M: StorageLinkedMap<KeyServerId, KeyServer, Query=Option<KeyServer>>,
+	M: IterableStorageMap<KeyServerId, KeyServer, Query=Option<KeyServer>>,
 {
 	fn get(&self) -> Vec<KeyServer> {
-		M::enumerate().map(|(_, ks)| ks).collect()
+		M::iter().map(|(_, ks)| ks).collect()
 	}
 
 	fn get_as_map(&self) -> BTreeMap<KeyServerId, KeyServer> {
-		M::enumerate().collect()
+		M::iter().collect()
 	}
 
 	fn contains(&self, id: &KeyServerId) -> bool {
@@ -193,7 +193,7 @@ impl<M> Storage for RuntimeStorage<M> where
 
 	fn append(&mut self, id: KeyServerId, address: KeyServerNetworkAddress) -> Result<(), &'static str> {
 		let mut existing_servers_mask = KeyServersMask::default();
-		for (existing_id, existing_server) in M::enumerate() {
+		for (existing_id, existing_server) in M::iter() {
 			ensure!(
 				existing_id != id,
 				"Key server is already in the set",
@@ -245,7 +245,7 @@ impl<M> Storage for RuntimeStorage<M> where
 	}
 
 	fn clear(&mut self) {
-		let ids = M::enumerate().map(|(id, _)| id).collect::<Vec<_>>();
+		let ids = M::iter().map(|(id, _)| id).collect::<Vec<_>>();
 		for id in ids {
 			M::remove(id);
 		}

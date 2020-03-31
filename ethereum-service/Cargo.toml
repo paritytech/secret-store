@@ -6,9 +6,11 @@ authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
 [dependencies]
-ethabi = "11.0"
-ethabi-contract = "11.0"
-ethabi-derive = "11.0"
+# TODO: refer to crates.io version when it is published
+ethabi = { version = "11.0", git = "https://github.com/svyatonik/ethabi.git", rev = "fb5c9466aed2e4482f0065b2a44b900785a19578" }
+ethabi-contract = { version = "11.0", git = "https://github.com/svyatonik/ethabi.git", rev = "fb5c9466aed2e4482f0065b2a44b900785a19578" }
+ethabi-derive = { version = "11.0", git = "https://github.com/svyatonik/ethabi.git", rev = "fb5c9466aed2e4482f0065b2a44b900785a19578" }
+
 ethereum-types = "0.9"
 futures = "0.3"
 keccak-hash = "0.5"

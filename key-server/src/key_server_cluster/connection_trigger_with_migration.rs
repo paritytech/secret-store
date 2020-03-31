@@ -15,6 +15,7 @@
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::collections::{BTreeSet, BTreeMap};
+use std::time::{Duration, Instant};
 use std::sync::Arc;
 use ethereum_types::H256;
 use log::{trace, warn};
@@ -28,6 +29,9 @@ use crate::key_server_cluster::connection_trigger::{Maintain, ConnectionsAction,
 	ServersSetChangeSessionCreatorConnector};
 use crate::types::{Error, NodeId};
 use primitives::key_server_key_pair::KeyServerKeyPair;
+
+/// Default same-migration session restart timeout.
+const SESSION_RESTART_TIMEOUT_S: u64 = 60;
 
 /// Key servers set change trigger with automated migration procedure.
 pub struct ConnectionTriggerWithMigration<NetworkAddress> {
@@ -99,6 +103,10 @@ pub enum MigrationState {
 
 /// Migration session.
 struct TriggerSession<NetworkAddress> {
+	/// Timeout between same-migration session restarts.
+	session_restart_timeout: Duration,
+	/// Last session start time.
+	session_start_time: Option<(H256, Instant)>,
 	/// Servers set change session creator connector.
 	connector: Arc<ServersSetChangeSessionCreatorConnectorWithMigration<NetworkAddress>>,
 	/// This node key pair.
@@ -119,6 +127,8 @@ impl<NetworkAddress: Send + Sync + Clone> ConnectionTriggerWithMigration<Network
 			snapshot: snapshot,
 			connected: BTreeSet::new(),
 			session: TriggerSession {
+				session_restart_timeout: Duration::from_secs(SESSION_RESTART_TIMEOUT_S),
+				session_start_time: None,
 				connector: Arc::new(ServersSetChangeSessionCreatorConnectorWithMigration {
 					self_node_id: self_key_pair.address(),
 					migration: Mutex::new(migration),
@@ -268,8 +278,20 @@ impl<NetworkAddress: Send + Sync> TriggerSession<NetworkAddress> {
 		if action != SessionAction::Start { // all other actions are processed in maintain
 			return None;
 		}
+
 		let migration = server_set.migration.as_ref()
 			.expect("action is Start only when migration is started (see maintain_session); qed");
+
+		// we do not want to start session just after previous session has been finished
+		// (either with success or failure): key server set may use this time to submit and
+		// finalize transactions
+		if let Some((last_migration_id, last_migration_start_time)) = self.session_start_time {
+			if last_migration_id == migration.id {
+				if last_migration_start_time.elapsed() < self.session_restart_timeout {
+					return None;
+				}
+			}
+		}
 
 		// we assume that authorities that are removed from the servers set are either offline, or malicious
 		// => they're not involved in ServersSetChangeSession
@@ -282,13 +304,16 @@ impl<NetworkAddress: Send + Sync> TriggerSession<NetworkAddress> {
 				.map(|new_set_signature| (old_set_signature, new_set_signature)));
 
 		match signatures {
-			Ok((old_set_signature, new_set_signature)) => Some(ServersSetChangeParams {
-				session_id: None,
-				migration_id: Some(migration.id),
-				new_nodes_set: new_set,
-				old_set_signature,
-				new_set_signature,
-			}),
+			Ok((old_set_signature, new_set_signature)) => {
+				self.session_start_time = Some((migration.id, Instant::now()));
+				Some(ServersSetChangeParams {
+					session_id: None,
+					migration_id: Some(migration.id),
+					new_nodes_set: new_set,
+					old_set_signature,
+					new_set_signature,
+				})
+			},
 			Err(err) => {
 				trace!(
 					target: "secretstore_net",

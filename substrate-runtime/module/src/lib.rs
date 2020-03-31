@@ -110,13 +110,6 @@ decl_module! {
 			key_server_set::<T>().add_key_server(origin, id, network_address)?;
 		}
 
-		/// Update key server in the set.
-		///
-		/// Can only be called by owner.
-		pub fn update_key_server(origin, id: KeyServerId, network_address: KeyServerNetworkAddress) {
-			key_server_set::<T>().update_key_server(origin, id, network_address)?;
-		}
-
 		/// Remove key server from the set.
 		///
 		/// Can only be called by owner.

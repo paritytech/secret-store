@@ -150,6 +150,8 @@ pub(crate) trait StorageWithMigration {
 	fn is_migration_confirmed(&self, id: &KeyServerId) -> bool;
 	/// Marks current migration completed by given key server.
 	fn confirm_migration(&mut self, id: &KeyServerId);
+	/// Clear migration confirmations from given key servers.
+	fn clear_migration_confirmations(&mut self, key_servers: &BTreeMap<KeyServerId, KeyServer>);
 	/// Set current set change block number.
 	fn set_current_change_block(&mut self, block: Self::BlockNumber);
 
@@ -308,6 +310,12 @@ impl<T: Trait> StorageWithMigration for RuntimeStorageWithMigration<T> {
 
 	fn confirm_migration(&mut self, id: &KeyServerId) {
 		MigrationConfirmations::insert(id, ())
+	}
+
+	fn clear_migration_confirmations(&mut self, key_servers: &BTreeMap<KeyServerId, KeyServer>) {
+		for id in key_servers.keys() {
+			MigrationConfirmations::remove(id);
+		}
 	}
 
 	fn set_current_change_block(&mut self, block: Self::BlockNumber) {

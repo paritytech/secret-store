@@ -545,18 +545,6 @@ fn update_nodes_set(data: Arc<NetConnectionsData>) {
 
 /// Execute maintain procedures of connections trigger.
 fn maintain_connection_trigger(data: Arc<NetConnectionsData>, maintain_action: Option<Maintain>) {
-	if maintain_action == Some(Maintain::SessionAndConnections) || maintain_action == Some(Maintain::Session) {
-		let session_params = data.trigger.lock().maintain_session();
-		if let Some(session_params) = session_params {
-			let session = data.message_processor.start_servers_set_change_session(session_params);
-			match session {
-				Ok(_) => trace!(target: "secretstore_net", "{}: started auto-migrate session",
-					data.self_key_pair.address()),
-				Err(err) => trace!(target: "secretstore_net", "{}: failed to start auto-migrate session with: {}",
-					data.self_key_pair.address(), err),
-			}
-		}
-	}
 	if maintain_action == Some(Maintain::SessionAndConnections) || maintain_action == Some(Maintain::Connections) {
 		let self_node_id = data.self_key_pair.address();
 		let mut trigger = data.trigger.lock();
@@ -588,6 +576,18 @@ fn maintain_connection_trigger(data: Arc<NetConnectionsData>, maintain_action: O
 				if node_to_connect != self_node_id {
 					data.nodes.insert(node_to_connect.clone(), node_addr.clone());
 				}
+			}
+		}
+	}
+	if maintain_action == Some(Maintain::SessionAndConnections) || maintain_action == Some(Maintain::Session) {
+		let session_params = data.trigger.lock().maintain_session();
+		if let Some(session_params) = session_params {
+			let session = data.message_processor.start_servers_set_change_session(session_params);
+			match session {
+				Ok(_) => trace!(target: "secretstore_net", "{}: started auto-migrate session",
+					data.self_key_pair.address()),
+				Err(err) => trace!(target: "secretstore_net", "{}: failed to start auto-migrate session with: {}",
+					data.self_key_pair.address(), err),
 			}
 		}
 	}

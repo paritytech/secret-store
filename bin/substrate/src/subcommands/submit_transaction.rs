@@ -40,9 +40,6 @@ pub enum SecretStoreTransaction {
 	AddKeyServer(KeyServerId, String),
 	/// Remove key server from the set.
 	RemoveKeyServer(KeyServerId),
-	/// Update key server in the set.
-	UpdateKeyServer(KeyServerId, String),
-
 	// === Key Server calls ===
 
 	/// Generate server key.
@@ -181,15 +178,6 @@ fn parse_transaction(stransaction: &str) -> Result<SecretStoreTransaction, Strin
 		return Ok(SecretStoreTransaction::RemoveKeyServer(key_server_id));
 	}
 
-	// to add key server, we need to provide: key server id and network address
-	let update_key_server_regex = regex::Regex::new(r"UpdateKeyServer\((.*),[ /t]*(.*)\)").expect(REGEX_PROOF);
-	if let Some(captures) = update_key_server_regex.captures(stransaction) {
-		let key_server_id = KeyServerId::from_str(captures.get(1).expect(GROUP_PROOF).as_str().trim_start_matches("0x"))
-			.map_err(|err| format!("{}", err))?;
-		let key_server_address = captures.get(2).expect(GROUP_PROOF).as_str().into();
-		return Ok(SecretStoreTransaction::UpdateKeyServer(key_server_id, key_server_address));
-	}
-
 	// to generate server key, caller must provide: key id and threshold
 	let generate_server_key_regex = regex::Regex::new(r"GenerateServerKey\((.*),[ /t]*(.*)\)").expect(REGEX_PROOF);
 	if let Some(captures) = generate_server_key_regex.captures(stransaction) {
@@ -288,20 +276,6 @@ async fn process_transaction(
 			move |event| match *event {
 				crate::runtime::Event::secretstore_runtime_module(
 					runtime_module::Event::KeyServerRemoved(req_id),
-				) if req_id == key_server_id => true,
-				_ => false,
-			},
-			find_migration_responses,
-		).await,
-		SecretStoreTransaction::UpdateKeyServer(key_server_id, key_server_address) => process_generic_transaction(
-			&client,
-			is_wait_mined,
-			is_wait_finalized,
-			is_wait_processed,
-			crate::runtime::SecretStoreCall::update_key_server(key_server_id, key_server_address.as_bytes().to_vec()),
-			move |event| match *event {
-				crate::runtime::Event::secretstore_runtime_module(
-					runtime_module::Event::KeyServerUpdated(req_id),
 				) if req_id == key_server_id => true,
 				_ => false,
 			},

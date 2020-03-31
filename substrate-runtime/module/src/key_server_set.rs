@@ -157,28 +157,6 @@ impl<BS, ES, SS> KeyServerSetWithMigration<BS, ES, SS> where
 		Ok(())
 	}
 
-	/// Update key server address.
-	///
-	/// If initialization is already completed, the changes are applied only when
-	/// migration is completed.
-	pub fn update_key_server(
-		&mut self,
-		caller: ES::EntityId,
-		id: KeyServerId,
-		address: KeyServerNetworkAddress,
-	) -> Result<(), &'static str> {
-		self.server_set_storage.ensure_can_modify(caller)?;
-
-		if !self.server_set_storage.is_initialized() {
-			self.server_set_storage.current_mut().update(&id, address.clone())?;
-		}
-		self.server_set_storage.new_mut().update(&id, address)?;
-
-		self.blockchain_storage.deposit_event(Event::KeyServerUpdated(id));
-
-		Ok(())
-	}
-
 	/// Start migration from the current set to the new set.
 	pub fn start_migration(
 		&mut self,
@@ -241,8 +219,9 @@ impl<BS, ES, SS> KeyServerSetWithMigration<BS, ES, SS> where
 			return Ok(());
 		}
 
-		// forget anything about current migration
+		// forget everything about current migration
 		let current_block_number = self.blockchain_storage.current_block_number();
+		self.server_set_storage.clear_migration_confirmations(&migration);
 		self.server_set_storage.current_mut().fill_from(migration);
 		self.server_set_storage.migration_mut().clear();
 		self.server_set_storage.set_current_change_block(current_block_number);
@@ -256,8 +235,8 @@ impl<BS, ES, SS> KeyServerSetWithMigration<BS, ES, SS> where
 
 #[cfg(test)]
 mod tests {
-	use frame_support::StorageValue;
-	use crate::CurrentSetChangeBlock;
+	use frame_support::{StorageMap, StorageValue};
+	use crate::{CurrentSetChangeBlock, MigrationConfirmations};
 	use crate::mock::*;
 	use super::*;
 
@@ -601,6 +580,9 @@ mod tests {
 				!key_server_set().snapshot(KEY_SERVER2_ID.into()).migration.unwrap().is_confirmed
 			);
 			assert_eq!(CurrentSetChangeBlock::<TestRuntime>::get(), 0);
+			assert!( MigrationConfirmations::contains_key(KeyServerId::from(KEY_SERVER0_ID)));
+			assert!( MigrationConfirmations::contains_key(KeyServerId::from(KEY_SERVER1_ID)));
+			assert!(!MigrationConfirmations::contains_key(KeyServerId::from(KEY_SERVER2_ID)));
 
 			// confirm migration by server#3
 			key_server_set().confirm_migration(
@@ -616,6 +598,9 @@ mod tests {
 			assert_eq!(ordered_set(snapshot.current_set), new_set);
 			assert_eq!(ordered_set(snapshot.new_set), new_set);
 			assert_eq!(CurrentSetChangeBlock::<TestRuntime>::get(), 42);
+			assert!(!MigrationConfirmations::contains_key(KeyServerId::from(KEY_SERVER0_ID)));
+			assert!(!MigrationConfirmations::contains_key(KeyServerId::from(KEY_SERVER1_ID)));
+			assert!(!MigrationConfirmations::contains_key(KeyServerId::from(KEY_SERVER2_ID)));
 		});
 	}
 

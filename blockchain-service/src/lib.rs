@@ -803,7 +803,7 @@ fn filter_document_task(
 	if total_active_sessions >= max_active_sessions {
 		return Err(SkipReason::TooMuchActiveSessions);
 	}
-	// check if task mus be procesed by another node
+	// check if task must be procesed by another node
 	if let Some(self_id) = self_id {
 		if !is_processed_by_this_key_server(current_set, self_id, server_key_id) {
 			return Err(SkipReason::NotMyTask);

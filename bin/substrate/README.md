@@ -93,3 +93,23 @@ RUST_LOG=secretstore=trace,secretstore_net=trace unbuffer ./parity-secretstore-s
 2020-03-27 12:49:08  INFO secretstore Transaction has been accepted to Ready queue
 2020-03-27 12:49:12  INFO secretstore Transaction is mined in block: 0x76d8685136af8096264ac98fa85c0fd2f3f8840a191af3441d2b9ed4c2c50ed8
 ```
+
+## Quick start: adding and removing key servers
+
+```bash
+# Let's add //Dave' key server to the key servers set.
+./parity-secretstore-substrate submit-transaction --wait-processed --transaction="AddKeyServer(0xc48b812bb43401392c037381aca934f4069c0517,127.0.0.1:10003)"
+2020-03-31 16:55:54  INFO secretstore Transaction has been accepted to Ready queue
+2020-03-31 16:56:00  INFO secretstore Transaction is mined in block: 0xffbb7699283266ca82c34ce5a411bc9b00891b1bb115679d7c68799fae91f7fd
+2020-03-31 16:56:13  INFO secretstore Transaction block is finalized: 0xffbb7699283266ca82c34ce5a411bc9b00891b1bb115679d7c68799fae91f7fd
+2020-03-31 16:56:18  INFO secretstore Migration has started
+2020-03-31 16:57:54  INFO secretstore Migration has completed
+
+# Let's remove //Dave' key server from the key servers set.
+./parity-secretstore-substrate submit-transaction --wait-processed --transaction="RemoveKeyServer(0xc48b812bb43401392c037381aca934f4069c0517)"
+2020-03-31 16:58:05  INFO secretstore Transaction has been accepted to Ready queue
+2020-03-31 16:58:06  INFO secretstore Transaction is mined in block: 0x5e38e559af2a5ffbf2ecaab5293498addf421ce59a2fcf1034e62beb70e02258
+2020-03-31 16:58:19  INFO secretstore Transaction block is finalized: 0x5e38e559af2a5ffbf2ecaab5293498addf421ce59a2fcf1034e62beb70e02258
+2020-03-31 16:58:24  INFO secretstore Migration has started
+2020-03-31 16:59:54  INFO secretstore Migration has completed
+```

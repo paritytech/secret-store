@@ -25,7 +25,7 @@ use sc_service;
 use sp_runtime::traits::{Verify, IdentifyAccount};
 
 /// Specialized `ChainSpec`. This is a specialization of the general Substrate ChainSpec type.
-pub type ChainSpec = sc_service::ChainSpec<GenesisConfig>;
+pub type ChainSpec = sc_service::GenericChainSpec<GenesisConfig>;
 
 /// The chain specification option. This is expected to come in from the CLI and
 /// is little more than one of a number of alternatives which can easily be converted
@@ -167,9 +167,9 @@ fn testnet_genesis(
 	}
 }
 
-pub fn load_spec(id: &str) -> Result<Option<ChainSpec>, String> {
+pub fn load_spec(id: &str) -> Result<Box<dyn sc_service::ChainSpec>, String> {
 	Ok(match Alternative::from(id) {
-		Some(spec) => Some(spec.load()?),
-		None => None,
+		Some(spec) => Box::new(spec.load()?),
+		None => Box::new(ChainSpec::from_json_file(std::path::PathBuf::from(id))?),
 	})
 }

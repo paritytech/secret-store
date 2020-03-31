@@ -6,7 +6,7 @@ authors = ["Parity Technologies <admin@parity.io>"]
 edition = "2018"
 
 [dependencies]
-ethereum-types = "0.8"
+ethereum-types = "0.9"
 futures = "0.3"
 log = "0.4"
 primitives = { package = "parity-secretstore-primitives", path = "../primitives" }

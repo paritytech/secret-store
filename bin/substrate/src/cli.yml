@@ -8,6 +8,7 @@ args:
         value_name: CONFIG
         help: Path to configuration file.
         takes_value: true
+    # Key server configuration options: general
     - self-secret:
         long: self-secret
         value_name: SELF_SECRET
@@ -28,6 +29,23 @@ args:
         value_name: NET_PORT
         help: Network port (TCP) that key server should use to communicate with other key servers. 8083 by default.
         takes_value: true
+    # Key server configuration options: related to key server set
+    - key-servers:
+        long: key-servers
+        value_name: KEY_SERVERS
+        help: Comma-separated list of other key servers identifiers (NODE_ADDRESS@NODE_NET_HOST:NODE_NET_PORT). If isn't specified (default), key servers set is read from Substrate node.
+        takes_value: true
+    - disable-auto-migration:
+        long: disable-auto-migration
+        help: Do not start auto migration session when key servers set changes. Only works when key servers set is read from the Substrate node.
+        conflicts_with:
+            - key-servers
+    - admin:
+        long: admin
+        value_name: ADMIN
+        help: Hex-encoded address of Secret Store administrator. Administrator may manually start migration sessions.
+        takes_value: true
+    # Substrate node connection options
     - sub-host:
         long: sub-host
         value_name: SUB_HOST
@@ -48,6 +66,28 @@ args:
         value_name: SUB_SIGNER_PASSWORD
         help: The password for the SURI of secret key to use when transactions are submitted to the Substrate node. Empty by default.
         takes_value: true
+    # On-chain service related options
+    - on-chain-service:
+        long: on-chain-service
+        help: Enables the on-chain service on this key server. Disabled by default.
+    # HTTP service related options
+    - http-service:
+        long: http-service
+        help: Enables the HTTP service on this key server. Disabled by default.
+    - http-service-interface:
+        long: http-service-interface
+        value_name: HTTP_SERVICE_INTERFACE
+        help: Expose HTTP API on given interface. "localhost" by default.
+        takes_value: true
+    - http-service-port:
+        long: http-service-port
+        value_name: HTTP_SERVICE_PORT
+        help: Expose HTTP API on given port. 8082 by default.
+        takes_value: true
+    - http-service-cors:
+        long: http-service-cors
+        value_name: HTTP_SERVICE_CORS
+        help: Specify CORS header for HTTP API responses. Special options are "all" and "none". "none" by default.
 subcommands:
     - submit-transaction:
         about: Submit Substrate transaction.

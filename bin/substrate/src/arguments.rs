@@ -14,10 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 use clap::ArgMatches;
 use serde::Deserialize;
-use parity_crypto::publickey::Secret;
+use parity_crypto::publickey::{Address, Secret};
 
 /// Default program arguments.
 /// Read either from CLI arguments, or from configuration file.
@@ -31,6 +31,23 @@ pub struct Arguments {
 	pub sub_port: u16,
 	pub sub_signer: String,
 	pub sub_signer_password: Option<String>,
+	pub key_server_set_source: KeyServerSetSource,
+	pub disable_auto_migration: bool,
+	pub admin: Option<Address>,
+	pub enable_onchain_service: bool,
+	pub enable_http_service: bool,
+	pub http_service_interface: String,
+	pub http_service_port: u16,
+	pub http_service_cors: String,
+}
+
+/// Key server set source.
+#[derive(Debug, PartialEq)]
+pub enum KeyServerSetSource {
+	/// Key server set is stored on-chain and read from Substrate node.
+	OnChain,
+	/// Key server set is hardcoded.
+	Hardcoded(HashMap<Address, (String, u16)>),
 }
 
 /// Substrate-related arguments. Used by subcommands.
@@ -55,6 +72,7 @@ struct TomlArguments {
 	net_host: Option<String>,
 	#[serde(default, rename = "net-port")]
 	net_port: Option<u16>,
+
 	#[serde(default, rename = "sub-host")]
 	sub_host: Option<String>,
 	#[serde(default, rename = "sub-port")]
@@ -63,6 +81,25 @@ struct TomlArguments {
 	sub_signer: Option<String>,
 	#[serde(default, rename = "sub-signer-password")]
 	sub_signer_password: Option<String>,
+
+	#[serde(default, rename = "key-servers")]
+	key_servers: Option<String>,
+	#[serde(default, rename = "disable-auto-migration")]
+	disable_auto_migration: Option<bool>,
+	#[serde(default, rename = "admin")]
+	admin: Option<String>,
+
+	#[serde(default, rename = "on-chain-service")]
+	enable_on_chain_service: Option<bool>,
+
+	#[serde(default, rename = "http-service")]
+	enable_http_service: Option<bool>,
+	#[serde(default, rename = "http-service-interface")]
+	http_service_interface: Option<String>,
+	#[serde(default, rename = "http-service-port")]
+	http_service_port: Option<u16>,
+	#[serde(default, rename = "http-service-cors")]
+	http_service_cors: Option<String>,
 }
 
 // we can't use `#[serde(with)]` on `Option<>` fields => we need custom deserializer
@@ -98,7 +135,9 @@ pub fn parse_arguments<'a>(
 
 	Ok(Arguments {
 		self_secret: matches.value_of("self-secret")
-			.map(|self_secret| Secret::from_str(self_secret).map_err(|err| format!("{}", err)))
+			.map(|self_secret| Secret::from_str(self_secret)
+				.map_err(|err| format!("Invalid 'self-secret' specified: {}", err))
+			)
 			.or_else(|| toml_arguments.self_secret.clone().map(Ok))
 			.ok_or_else(|| String::from("Key server secret key must be specified"))??,
 		db_path: matches.value_of("db-path")
@@ -110,13 +149,77 @@ pub fn parse_arguments<'a>(
 			.or_else(|| toml_arguments.net_host.clone())
 			.unwrap_or_else(|| "0.0.0.0".into()),
 		net_port: matches.value_of("net-port")
-			.map(|net_port| u16::from_str(net_port).map_err(|err| format!("{}", err)))
+			.map(|net_port| u16::from_str(net_port)
+				.map_err(|err| format!("Invalid 'net-port' specified: {}", err))
+			)
 			.or_else(|| toml_arguments.net_port.clone().map(Ok))
 			.unwrap_or_else(|| Ok(8083))?,
+
 		sub_host: substrate_arguments.sub_host,
 		sub_port: substrate_arguments.sub_port,
 		sub_signer: substrate_arguments.sub_signer,
 		sub_signer_password: substrate_arguments.sub_signer_password,
+	
+		key_server_set_source: matches.value_of("key-servers")
+			.map(str::to_owned)
+			.or_else(|| toml_arguments.key_servers.clone())
+			.map(|key_servers| key_servers
+				.split(',')
+				.filter(|ks| !ks.is_empty())
+				.map(|ks| {
+					let address_and_net_address = ks.split('@').collect::<Vec<_>>();
+					if address_and_net_address.len() != 2 {
+						return Err(format!("Invalid 'key-servers' specified: {}", ks));
+					}
+
+					let net_ip_and_port = address_and_net_address[1].split(':').collect::<Vec<_>>();
+					if net_ip_and_port.len() != 2 {
+						return Err(format!("Invalid 'key-servers' specified: {}", ks));
+					}
+
+					let address = address_and_net_address[0]
+						.parse()
+						.map_err(|e| format!("Invalid address in 'key-servers': {} ({:?})", address_and_net_address[0], e))?;
+					let port = net_ip_and_port[1]
+						.parse()
+						.map_err(|e| format!("Invalid port in 'key-servers': {} ({:?})", net_ip_and_port[1], e))?;
+
+					Ok((address, (net_ip_and_port[0].into(), port)))
+				})
+				.collect::<Result<HashMap<_, _>, _>>()
+				.map(KeyServerSetSource::Hardcoded)
+			)
+			.unwrap_or_else(|| Ok(KeyServerSetSource::OnChain))?,
+		disable_auto_migration: matches.is_present("disable-auto-migration")
+			|| toml_arguments.disable_auto_migration.unwrap_or(false),
+		admin: matches.value_of("admin")
+			.map(str::to_owned)
+			.or_else(|| toml_arguments.admin.clone())
+			.map(|admin| admin
+				.parse()
+				.map(Some)
+				.map_err(|e| format!("Invalid 'admin' specified: {}", e))
+			)
+			.unwrap_or(Ok(None))?,
+
+		enable_onchain_service: matches.is_present("on-chain-service")
+			|| toml_arguments.enable_on_chain_service.unwrap_or(false),
+
+		enable_http_service: matches.is_present("http-service")
+			|| toml_arguments.enable_http_service.unwrap_or(false),
+		http_service_interface: matches.value_of("http-service-interface")
+			.map(str::to_owned)
+			.or_else(|| toml_arguments.http_service_interface.clone())
+			.unwrap_or_else(|| "localhost".into()),
+		http_service_port: matches.value_of("http-service-port")
+			.map(|http_service_port| u16::from_str(http_service_port)
+				.map_err(|err| format!("Invalid 'http-service-port' specified: {}", err)))
+			.or_else(|| toml_arguments.http_service_port.clone().map(Ok))
+			.unwrap_or_else(|| Ok(8082))?,
+		http_service_cors: matches.value_of("http-service-cors")
+			.map(str::to_owned)
+			.or_else(|| toml_arguments.http_service_cors.clone())
+			.unwrap_or_else(|| "none".into()),
 	})
 }
 
@@ -164,6 +267,7 @@ mod tests {
 		assert_eq!(
 			parse_arguments(&clap_app.get_matches_from(vec![
 				"parity-secretstore-substrate",
+				"--on-chain-service",
 				"--self-secret=0101010101010101010101010101010101010101010101010101010101010101",
 				"--net-host=nethost.com",
 				"--sub-port=4242",
@@ -178,6 +282,14 @@ mod tests {
 				sub_port: 4242,
 				sub_signer: "//Bob".into(),
 				sub_signer_password: None,
+				key_server_set_source: KeyServerSetSource::OnChain,
+				disable_auto_migration: false,
+				admin: None,
+				enable_onchain_service: true,
+				enable_http_service: false,
+				http_service_interface: "localhost".into(),
+				http_service_port: 8082,
+				http_service_cors: "none".into(),
 			}),
 		);
 	}
@@ -197,6 +309,13 @@ mod tests {
 				"--sub-port=4242",
 				"--sub-signer=//Bob",
 				"--sub-signer-password=password",
+				"--key-servers=0101010101010101010101010101010101010101@7.7.7.7:33,0202020202020202020202020202020202020202@8.8.8.8:44",
+				"--admin=0303030303030303030303030303030303030303",
+				"--on-chain-service",
+				"--http-service",
+				"--http-service-interface=9.9.9.9",
+				"--http-service-port=55",
+				"--http-service-cors=all",
 			])),
 			Ok(Arguments {
 				self_secret: Secret::from([1u8; 32]),
@@ -207,6 +326,17 @@ mod tests {
 				sub_port: 4242,
 				sub_signer: "//Bob".into(),
 				sub_signer_password: Some("password".into()),
+				key_server_set_source: KeyServerSetSource::Hardcoded(vec![
+					([1u8; 20].into(), ("7.7.7.7".into(), 33)),
+					([2u8; 20].into(), ("8.8.8.8".into(), 44))
+				].into_iter().collect()),
+				disable_auto_migration: false,
+				admin: Some([3u8; 20].into()),
+				enable_onchain_service: true,
+				enable_http_service: true,
+				http_service_interface: "9.9.9.9".into(),
+				http_service_port: 55,
+				http_service_cors: "all".into(),
 			}),
 		);
 	}
@@ -221,6 +351,9 @@ mod tests {
 net-host = "nethost.com"
 sub-port = 4242
 sub-signer = "//Bob"
+disable-auto-migration = true
+admin = "0303030303030303030303030303030303030303"
+http-service = true
 		"#.as_bytes()).unwrap();
 
 		assert_eq!(
@@ -240,6 +373,14 @@ sub-signer = "//Bob"
 				sub_port: 4242,
 				sub_signer: "//Bob".into(),
 				sub_signer_password: None,
+				key_server_set_source: KeyServerSetSource::OnChain,
+				disable_auto_migration: true,
+				admin: Some([3u8; 20].into()),
+				enable_onchain_service: false,
+				enable_http_service: true,
+				http_service_interface: "localhost".into(),
+				http_service_port: 8082,
+				http_service_cors: "none".into(),
 			}),
 		);
 	}
@@ -259,6 +400,13 @@ sub-host = "subhost.com"
 sub-port = 4242
 sub-signer = "//Bob"
 sub-signer-password = "password"
+key-servers = "0101010101010101010101010101010101010101@7.7.7.7:33,0202020202020202020202020202020202020202@8.8.8.8:44"
+admin = "0303030303030303030303030303030303030303"
+on-chain-service = true
+http-service = true
+http-service-interface = "9.9.9.9"
+http-service-port = 55
+http-service-cors = "all"
 		"#.as_bytes()).unwrap();
 
 		assert_eq!(
@@ -276,6 +424,17 @@ sub-signer-password = "password"
 				sub_port: 4242,
 				sub_signer: "//Bob".into(),
 				sub_signer_password: Some("password".into()),
+				key_server_set_source: KeyServerSetSource::Hardcoded(vec![
+					([1u8; 20].into(), ("7.7.7.7".into(), 33)),
+					([2u8; 20].into(), ("8.8.8.8".into(), 44))
+				].into_iter().collect()),
+				disable_auto_migration: false,
+				admin: Some([3u8; 20].into()),
+				enable_onchain_service: true,
+				enable_http_service: true,
+				http_service_interface: "9.9.9.9".into(),
+				http_service_port: 55,
+				http_service_cors: "all".into(),
 			}),
 		);
 	}
@@ -288,6 +447,8 @@ sub-signer-password = "password"
 		let temp_file_path = temp_dir.path().join("config.toml");
 		std::fs::File::create(temp_file_path.clone()).unwrap().write_all(r#"
 self-secret = "0202020202020202020202020202020202020202020202020202020202020202"
+on-chain-service = false
+http-service = false
 		"#.as_bytes()).unwrap();
 
 		assert_eq!(
@@ -296,6 +457,8 @@ self-secret = "0202020202020202020202020202020202020202020202020202020202020202"
 				"--config",
 				temp_file_path.to_str().unwrap(),
 				"--self-secret=0101010101010101010101010101010101010101010101010101010101010101",
+				"--on-chain-service",
+				"--http-service",
 			])),
 			Ok(Arguments {
 				self_secret: Secret::from([1u8; 32]),
@@ -306,6 +469,14 @@ self-secret = "0202020202020202020202020202020202020202020202020202020202020202"
 				sub_port: 9944,
 				sub_signer: "//Alice".into(),
 				sub_signer_password: None,
+				key_server_set_source: KeyServerSetSource::OnChain,
+				disable_auto_migration: false,
+				admin: None,
+				enable_onchain_service: true,
+				enable_http_service: true,
+				http_service_interface: "localhost".into(),
+				http_service_port: 8082,
+				http_service_cors: "none".into(),
 			}),
 		);
 	}

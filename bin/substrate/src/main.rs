@@ -183,10 +183,15 @@ async fn start_key_server(
 	let key_storage = Arc::new(::key_server::db_key_storage::PersistentKeyStorage::new(
 		&std::path::Path::new(&arguments.db_path),
 	).map_err(|error| format!("{:?}", error))?);
+	let key_server_config = ::key_server::ClusterConfiguration {
+		admin_address: arguments.admin,
+		auto_migrate_enabled: !arguments.disable_auto_migration,
+	};
 	let key_server = key_server::start(
 		tokio_runtime.executor(),
 		key_server_key_pair.clone(),
 		arguments.net_port,
+		key_server_config,
 		key_storage.clone(),
 		acl_storage.clone(),
 		key_server_set.clone(),

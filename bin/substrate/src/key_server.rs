@@ -31,14 +31,11 @@ pub fn start(
 	executor: TokioHandle,
 	key_server_key_pair: Arc<dyn KeyServerKeyPair>,
 	listen_port: u16,
+	key_server_config: ClusterConfiguration,
 	key_storage: Arc<PersistentKeyStorage>,
 	acl_storage: Arc<OnChainAclStorage>,
 	key_server_set: Arc<dyn KeyServerSet<NetworkAddress=std::net::SocketAddr>>,
 ) -> Result<Arc<KeyServerImpl>, Error> {
-	let key_server_config = ClusterConfiguration {
-		admin_address: None,
-		auto_migrate_enabled: true,
-	};
 	key_server::Builder::new()
 		.with_self_key_pair(key_server_key_pair)
 		.with_acl_storage(acl_storage)

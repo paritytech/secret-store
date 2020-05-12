@@ -59,11 +59,12 @@ struct PreviousMigrationTransaction {
 }
 
 impl OnChainKeyServerSet {
-	pub fn new(client: Client, self_id: KeyServerId, sync_futures_pool: futures::executor::ThreadPool) -> Self {
-		OnChainKeyServerSet {
+	pub fn new(client: Client, self_id: KeyServerId) -> Result<Self, String> {
+		Ok(OnChainKeyServerSet {
 			client: Arc::new(client),
 			self_id,
-			sync_futures_pool,
+			sync_futures_pool: futures::executor::ThreadPool::new()
+				.map_err(|err| format!("Error creating thread pool: {}", err))?,
 			data: Arc::new(RwLock::new(OnChainKeyServerSetData {
 				best_block_snapshot: KeyServerSetSnapshot {
 					current_set: BTreeMap::new(),
@@ -73,7 +74,7 @@ impl OnChainKeyServerSet {
 				start_migration_tx: None,
 				confirm_migration_tx: None,
 			})),
-		}
+		})
 	}
 
 	pub fn set_best_block(&self, best_block: (crate::runtime::BlockNumber, crate::runtime::BlockHash)) {
@@ -88,6 +89,7 @@ impl OnChainKeyServerSet {
 			).await
 		};
 
+		// TODO: this may be completed in wrong order - i.e. future for block N will complete after future for block N+1
 		self.sync_futures_pool.spawn_ok(
 			call_runtime_method.map(move |result: Result<runtime_primitives::key_server_set::KeyServerSetSnapshot, _>| {
 				match result {
@@ -261,7 +263,7 @@ fn into_socket_addr_set(
 		.collect()
 }
 
-fn parse_socket_addr(
+pub fn parse_socket_addr(
 	server_address: Vec<u8>,
 ) -> Result<SocketAddr, String> {
 	String::from_utf8(server_address)

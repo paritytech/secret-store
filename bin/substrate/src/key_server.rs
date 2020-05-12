@@ -18,12 +18,12 @@ use std::sync::Arc;
 use primitives::{
 	error::Error,
 	executor::TokioHandle,
+	key_server_set::KeyServerSet,
 	key_server_key_pair::KeyServerKeyPair,
 };
 use key_server::{ClusterConfiguration, KeyServerImpl, db_key_storage::PersistentKeyStorage};
 use crate::{
 	acl_storage::OnChainAclStorage,
-	key_server_set::OnChainKeyServerSet,
 };
 
 /// Start Secret Store key server.
@@ -33,7 +33,7 @@ pub fn start(
 	listen_port: u16,
 	key_storage: Arc<PersistentKeyStorage>,
 	acl_storage: Arc<OnChainAclStorage>,
-	key_server_set: Arc<OnChainKeyServerSet>,
+	key_server_set: Arc<dyn KeyServerSet<NetworkAddress=std::net::SocketAddr>>,
 ) -> Result<Arc<KeyServerImpl>, Error> {
 	let key_server_config = ClusterConfiguration {
 		admin_address: None,

@@ -69,7 +69,7 @@ args:
     # On-chain service related options
     - on-chain-service:
         long: on-chain-service
-        help: Enables the on-chain service on this key server. Disabled by default.
+        help: Enables the on-chain service on this key server. Only works with on-chain key servers set. Disabled by default.
     # HTTP service related options
     - http-service:
         long: http-service

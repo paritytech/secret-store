@@ -33,11 +33,42 @@ use std::{
 };
 use futures::{FutureExt, TryFutureExt};
 use log::error;
-use parity_crypto::publickey::{KeyPair, public_to_address};
+use parity_crypto::publickey::{Address, KeyPair, public_to_address};
 use primitives::{
 	executor::{TokioRuntime, tokio_runtime},
+	key_server_set::{InMemoryKeyServerSet, KeyServerSet},
 	key_server_key_pair::InMemoryKeyServerKeyPair,
 };
+
+/// Best block receiver.
+pub trait BestBlockReceiver {
+	/// Called when best block is updated.
+	fn set_best_block(&self, number: crate::runtime::BlockNumber, hash: crate::runtime::BlockHash);
+}
+
+impl BestBlockReceiver for substrate_client::Client {
+	fn set_best_block(&self, number: crate::runtime::BlockNumber, hash: crate::runtime::BlockHash) {
+		substrate_client::Client::set_best_block(self, (number, hash))
+	}
+}
+
+impl BestBlockReceiver for key_server_set::OnChainKeyServerSet {
+	fn set_best_block(&self, number: crate::runtime::BlockNumber, hash: crate::runtime::BlockHash) {
+		key_server_set::OnChainKeyServerSet::set_best_block(self, (number, hash))
+	}
+}
+
+impl BestBlockReceiver for futures::channel::mpsc::UnboundedSender<runtime::BlockHash> {
+	fn set_best_block(&self, _number: crate::runtime::BlockNumber, hash: crate::runtime::BlockHash) {
+		if let Err(error) = self.unbounded_send(hash) {
+			error!(
+				target: "secretstore",
+				"Failed to send finalized block: {:?}",
+				error,
+			);
+		}
+	}
+}
 
 fn main() {
 	initialize();
@@ -93,26 +124,26 @@ async fn run_key_server(arguments: arguments::Arguments) -> Result<(), String> {
 	// we still need tokio 0.1 runtime to run SS :/
 	let tokio_runtime = tokio_runtime()
 		.map_err(|err| format!("Error creating tokio runtime: {}", err))?;
-	// and since not everything in SS is async, we need an additional
-	// futures executor that we'll use to run futures in sync functions
-	let thread_pool = futures::executor::ThreadPool::new()
-		.map_err(|err| format!("Error creating thread pool: {}", err))?;
 
 	// start key server and services
-	let (client, key_server_set, best_sender) = start_key_server(
+	let (client, best_block_receivers) = start_key_server(
 		arguments,
 		&tokio_runtime,
-		thread_pool,
 	).await?;
 
-	let mut fut_finalized_headers = client.subscribe_finalized_heads().await
+	let mut fut_finalized_headers = client
+		.subscribe_finalized_heads()
+		.await
 		.map_err(|err| format!("Failed to subscribe to finalized blocks: {:?}", err))?;
 
 	loop {
 		futures::select! {
 			finalized_header = fut_finalized_headers.next().fuse() => {
 				let finalized_block = (finalized_header.number, finalized_header.hash());
-				client.set_best_block(finalized_block);
+				// TODO: disable this when node is syncing (any side effects?)
+				// (like: maybe always return false in AclStorage when we believe are syncing, ...)
+				best_block_receivers.iter().for_each(|bbr| bbr.set_best_block(finalized_block.0, finalized_block.1));
+/*				client.set_best_block(finalized_block);
 				key_server_set.set_best_block(finalized_block);
 				if let Err(error) = best_sender.unbounded_send(finalized_block.1) {
 					error!(
@@ -120,7 +151,7 @@ async fn run_key_server(arguments: arguments::Arguments) -> Result<(), String> {
 						"Failed to send finalized block: {:?}",
 						error,
 					);
-				}
+				}*/
 			},
 		}
 	}
@@ -130,12 +161,9 @@ async fn run_key_server(arguments: arguments::Arguments) -> Result<(), String> {
 async fn start_key_server(
 	arguments: arguments::Arguments,
 	tokio_runtime: &TokioRuntime,
-	thread_pool: futures::executor::ThreadPool,
-) -> Result<(
-	substrate_client::Client,
-	Arc<key_server_set::OnChainKeyServerSet>,
-	futures::channel::mpsc::UnboundedSender<runtime::BlockHash>,
-), String> {
+) -> Result<(substrate_client::Client, Vec<Arc<dyn BestBlockReceiver>>), String> {
+	let mut best_block_receivers = Vec::with_capacity(3);
+
 	// let's connect to Substrate node first
 	let client = substrate_client::Client::new(
 		&format!("ws://{}:{}", arguments.sub_host, arguments.sub_port),
@@ -151,11 +179,7 @@ async fn start_key_server(
 	let self_id = public_to_address(self_key_pair.public());
 	let key_server_key_pair = Arc::new(InMemoryKeyServerKeyPair::new(self_key_pair));
 	let acl_storage = Arc::new(acl_storage::OnChainAclStorage::new(client.clone()));
-	let key_server_set = Arc::new(key_server_set::OnChainKeyServerSet::new(
-		client.clone(),
-		self_id.clone(),
-		thread_pool,
-	));
+	let key_server_set = prepare_key_server_set(&mut best_block_receivers, &client, self_id, arguments.key_server_set_source)?;
 	let key_storage = Arc::new(::key_server::db_key_storage::PersistentKeyStorage::new(
 		&std::path::Path::new(&arguments.db_path),
 	).map_err(|error| format!("{:?}", error))?);
@@ -191,7 +215,38 @@ async fn start_key_server(
 		best_receiver,
 	).map_err(|error| format!("{:?}", error))?;
 
-	Ok((client, key_server_set, best_sender))
+	best_block_receivers.push(Arc::new(client.clone()));
+	best_block_receivers.push(Arc::new(best_sender));
+
+	Ok((client, best_block_receivers))
+}
+
+fn prepare_key_server_set(
+	best_block_receivers: &mut Vec<Arc<dyn BestBlockReceiver>>,
+	client: &substrate_client::Client,
+	self_id: Address,
+	key_server_set_source: arguments::KeyServerSetSource,
+) -> Result<Arc<dyn KeyServerSet<NetworkAddress = std::net::SocketAddr>>, String> {
+	Ok(match key_server_set_source {
+		arguments::KeyServerSetSource::OnChain => {
+			let key_server_set = Arc::new(key_server_set::OnChainKeyServerSet::new(
+				client.clone(),
+				self_id,
+			)?);
+			best_block_receivers.push(key_server_set.clone());
+			key_server_set as Arc<dyn KeyServerSet<NetworkAddress = std::net::SocketAddr>>
+		},
+		arguments::KeyServerSetSource::Hardcoded(key_servers) => Arc::new(InMemoryKeyServerSet::new(
+			true,
+			self_id,
+			key_servers
+				.into_iter()
+				.map(|(id, (host, port))| key_server_set::parse_socket_addr(format!("{}:{}", host, port).as_bytes().to_vec())
+					.map(|addr| (id, addr))
+				)
+				.collect::<Result<_, _>>()?,
+		)),
+	})
 }
 
 fn initialize() {

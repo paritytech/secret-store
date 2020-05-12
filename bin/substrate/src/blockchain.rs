@@ -37,7 +37,6 @@ use substrate_service::{
 	Blockchain, BlockchainServiceTask, MaybeSecretStoreEvent,
 };
 use crate::{
-	key_server_set::OnChainKeyServerSet,
 	substrate_client::{BlockRef, Client},
 };
 
@@ -47,7 +46,7 @@ pub struct SecretStoreBlockchain {
 	/// is synching the blockhain.
 	client: Client,
 	/// On-chain key server set.
-	key_server_set: Arc<OnChainKeyServerSet>,
+	key_server_set: Arc<dyn KeyServerSet<NetworkAddress = std::net::SocketAddr>>,
 }
 
 /// Substrate runtime event wrapper.
@@ -61,7 +60,7 @@ pub enum SubstrateServiceTaskWrapper {
 
 impl SecretStoreBlockchain {
 	/// Create new blockchain.
-	pub fn new(client: Client, key_server_set: Arc<OnChainKeyServerSet>) -> SecretStoreBlockchain {
+	pub fn new(client: Client, key_server_set: Arc<dyn KeyServerSet<NetworkAddress = std::net::SocketAddr>>) -> SecretStoreBlockchain {
 		SecretStoreBlockchain {
 			client,
 			key_server_set,

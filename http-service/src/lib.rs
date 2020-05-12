@@ -68,7 +68,7 @@ pub struct DecomposedRequest {
 
 /// Start listening HTTP requests on given address.
 pub async fn start_service<KS: KeyServer>(
-	listen_address: &str,
+	listen_address: String,
 	listen_port: u16,
 	key_server: Arc<KS>,
 	cors: CorsDomains,

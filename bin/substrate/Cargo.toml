@@ -37,6 +37,7 @@ sp-version = "2.0.0-alpha.5"
 
 # internal secret store references
 
+http-service = { package = "parity-secretstore-http-service", path = "../../http-service" }
 key-server = { package = "parity-secretstore-key-server", path = "../../key-server" }
 primitives = { package = "parity-secretstore-primitives", path = "../../primitives" }
 substrate-runtime = { package = "parity-secretstore-substrate-runtime", path = "../../substrate-runtime/runtime" }

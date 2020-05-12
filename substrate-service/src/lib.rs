@@ -22,7 +22,7 @@ use std::{
 	sync::Arc,
 };
 use futures::{FutureExt, Stream, StreamExt, future::ready};
-use log::trace;
+use log::error;
 use primitives::{
 	Address, KeyServerId, Public, ServerKeyId,
 	error::Error,
@@ -216,7 +216,7 @@ pub fn start_service<B, E, TP, KSrv, KStr>(
 			})
 	);
 	executor.spawn(new_blocks_future
-		.map(|err| trace!(
+		.map(|err| error!(
 			target: "secretstore",
 			"Blockhain service future failed: {:?}",
 			err,

@@ -3284,6 +3284,7 @@ dependencies = [
  "pallet-transaction-payment",
  "parity-crypto",
  "parity-scale-codec",
+ "parity-secretstore-http-service",
  "parity-secretstore-key-server",
  "parity-secretstore-primitives",
  "parity-secretstore-substrate-runtime",

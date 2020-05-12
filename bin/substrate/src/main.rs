@@ -197,31 +197,61 @@ async fn start_key_server(
 		key_server_set.clone(),
 	).map_err(|error| format!("{:?}", error))?;
 
-	// start substrate service
-	let (best_sender, best_receiver) = futures::channel::mpsc::unbounded();
-	let blockchain = Arc::new(
-		blockchain::SecretStoreBlockchain::new(
-			client.clone(),
-			key_server_set.clone(),
-		)
-	);
-	let transaction_pool = Arc::new(
-		transaction_pool::SecretStoreTransactionPool::new(
-			client.clone(),
-		)
-	);
-	service::start(
-		blockchain,
-		transaction_pool,
-		tokio_runtime.executor(),
-		key_server,
-		key_storage,
-		key_server_key_pair,
-		best_receiver,
-	).map_err(|error| format!("{:?}", error))?;
+	// start on-chain substrate service
+	if arguments.enable_onchain_service {
+		let (best_sender, best_receiver) = futures::channel::mpsc::unbounded();
+		let blockchain = Arc::new(
+			blockchain::SecretStoreBlockchain::new(
+				client.clone(),
+				key_server_set.clone(),
+			)
+		);
+		let transaction_pool = Arc::new(
+			transaction_pool::SecretStoreTransactionPool::new(
+				client.clone(),
+			)
+		);
+		service::start(
+			blockchain,
+			transaction_pool,
+			tokio_runtime.executor(),
+			key_server.clone(),
+			key_storage,
+			key_server_key_pair,
+			best_receiver,
+		).map_err(|error| format!("{:?}", error))?;
+	
+		best_block_receivers.push(Arc::new(best_sender));
+	}
+
+	// start http service
+	if arguments.enable_http_service {
+		tokio_runtime.executor().spawn_std(
+			http_service::start_service(
+				arguments.http_service_interface,
+				arguments.http_service_port,
+				key_server,
+				match arguments.http_service_cors.as_str() {
+					"none" => Some(Vec::new()),
+					"*" | "all" | "any" => None,
+					_ => Some(
+						arguments
+							.http_service_cors
+							.split(',')
+							.map(Into::into)
+							.collect(),
+					),
+				},
+			).map(|err| log::error!(
+				target: "secretstore",
+				"HTTP service future failed: {:?}",
+				err,
+			))
+			.boxed()
+		);
+	}
 
 	best_block_receivers.push(Arc::new(client.clone()));
-	best_block_receivers.push(Arc::new(best_sender));
 
 	Ok((client, best_block_receivers))
 }

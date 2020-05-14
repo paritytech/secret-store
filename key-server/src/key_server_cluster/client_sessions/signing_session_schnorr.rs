@@ -1000,7 +1000,6 @@ mod tests {
 			message: GenerationMessage::ConfirmInitialization(ConfirmInitialization {
 				session: SessionId::from([1u8; 32]).into(),
 				session_nonce: 0,
-				derived_point: Public::default().into(),
 			}),
 		}), Err(Error::InvalidStateForRequest));
 	}
@@ -1026,7 +1025,6 @@ mod tests {
 				nodes: BTreeMap::new(),
 				is_zero: false,
 				threshold: 1,
-				derived_point: Public::default().into(),
 			})
 		}), Err(Error::InvalidMessage));
 	}
@@ -1108,7 +1106,6 @@ mod tests {
 			message: GenerationMessage::ConfirmInitialization(ConfirmInitialization {
 				session: SessionId::from([1u8; 32]).into(),
 				session_nonce: 0,
-				derived_point: Public::default().into(),
 			}),
 		});
 		assert_eq!(session.process_message(&ml.0.node(1), &msg), Err(Error::ReplayProtection));

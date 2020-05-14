@@ -54,6 +54,7 @@ pub use self::admin_sessions::share_change_session;
 pub use self::client_sessions::decryption_session;
 pub use self::client_sessions::encryption_session;
 pub use self::client_sessions::generation_session;
+pub use self::client_sessions::random_point_generation_session;
 pub use self::client_sessions::signing_session_ecdsa;
 pub use self::client_sessions::signing_session_schnorr;
 

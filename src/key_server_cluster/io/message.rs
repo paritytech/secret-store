@@ -30,7 +30,7 @@ use key_server_cluster::message::{Message, ClusterMessage, GenerationMessage, En
 /// Size of serialized header.
 pub const MESSAGE_HEADER_SIZE: usize = 18;
 /// Current header version.
-pub const CURRENT_HEADER_VERSION: u64 = 1;
+pub const CURRENT_HEADER_VERSION: u64 = 2;
 
 /// Message header.
 #[derive(Debug, PartialEq)]
@@ -71,11 +71,12 @@ pub fn serialize_message(message: Message) -> Result<SerializedMessage, Error> {
 
 		Message::Generation(GenerationMessage::InitializeSession(payload))					=> (50, serde_json::to_vec(&payload)),
 		Message::Generation(GenerationMessage::ConfirmInitialization(payload))				=> (51, serde_json::to_vec(&payload)),
-		Message::Generation(GenerationMessage::CompleteInitialization(payload))				=> (52, serde_json::to_vec(&payload)),
+		Message::Generation(GenerationMessage::DerivedPointGeneration(payload))				=> (52, serde_json::to_vec(&payload)),
 		Message::Generation(GenerationMessage::KeysDissemination(payload))					=> (53, serde_json::to_vec(&payload)),
 		Message::Generation(GenerationMessage::PublicKeyShare(payload))						=> (54, serde_json::to_vec(&payload)),
-		Message::Generation(GenerationMessage::SessionError(payload))						=> (55, serde_json::to_vec(&payload)),
-		Message::Generation(GenerationMessage::SessionCompleted(payload))					=> (56, serde_json::to_vec(&payload)),
+		Message::Generation(GenerationMessage::JointPublicKey(payload))						=> (55, serde_json::to_vec(&payload)),
+		Message::Generation(GenerationMessage::SessionError(payload))						=> (56, serde_json::to_vec(&payload)),
+		Message::Generation(GenerationMessage::SessionCompleted(payload))					=> (57, serde_json::to_vec(&payload)),
 
 		Message::Encryption(EncryptionMessage::InitializeEncryptionSession(payload))		=> (100, serde_json::to_vec(&payload)),
 		Message::Encryption(EncryptionMessage::ConfirmEncryptionInitialization(payload))	=> (101, serde_json::to_vec(&payload)),
@@ -173,11 +174,12 @@ pub fn deserialize_message(header: &MessageHeader, payload: Vec<u8>) -> Result<M
 
 		50	=> Message::Generation(GenerationMessage::InitializeSession(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
 		51	=> Message::Generation(GenerationMessage::ConfirmInitialization(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
-		52	=> Message::Generation(GenerationMessage::CompleteInitialization(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
+		52	=> Message::Generation(GenerationMessage::DerivedPointGeneration(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
 		53	=> Message::Generation(GenerationMessage::KeysDissemination(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
 		54	=> Message::Generation(GenerationMessage::PublicKeyShare(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
-		55	=> Message::Generation(GenerationMessage::SessionError(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
-		56	=> Message::Generation(GenerationMessage::SessionCompleted(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
+		55	=> Message::Generation(GenerationMessage::JointPublicKey(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
+		56	=> Message::Generation(GenerationMessage::SessionError(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
+		57	=> Message::Generation(GenerationMessage::SessionCompleted(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
 
 		100	=> Message::Encryption(EncryptionMessage::InitializeEncryptionSession(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
 		101	=> Message::Encryption(EncryptionMessage::ConfirmEncryptionInitialization(serde_json::from_slice(&payload).map_err(|err| Error::Serde(err.to_string()))?)),
@@ -241,7 +243,7 @@ pub fn deserialize_message(header: &MessageHeader, payload: Vec<u8>) -> Result<M
 pub fn encrypt_message(key: &KeyPair, message: SerializedMessage) -> Result<SerializedMessage, Error> {
 	let mut header: Vec<_> = message.into();
 	let payload = header.split_off(MESSAGE_HEADER_SIZE);
-	let encrypted_payload = ecies::encrypt(key.public(), &[], &payload)?;
+	let encrypted_payload = encrypt_data(key, &payload)?;
 
 	let header = deserialize_header(&header)?;
 	build_serialized_message(header, encrypted_payload)
@@ -249,7 +251,17 @@ pub fn encrypt_message(key: &KeyPair, message: SerializedMessage) -> Result<Seri
 
 /// Decrypt serialized message.
 pub fn decrypt_message(key: &KeyPair, payload: Vec<u8>) -> Result<Vec<u8>, Error> {
-	Ok(ecies::decrypt(key.secret(), &[], &payload)?)
+	decrypt_data(key, &payload)
+}
+
+/// Encrypt data.
+pub fn encrypt_data(key: &KeyPair, data: &[u8]) -> Result<Vec<u8>, Error> {
+	Ok(ecies::encrypt(key.public(), &[], data)?)
+}
+
+/// Decrypt data.
+pub fn decrypt_data(key: &KeyPair, data: &[u8]) -> Result<Vec<u8>, Error> {
+	Ok(ecies::decrypt(key.secret(), &[], data)?)
 }
 
 /// Fix shared encryption key.

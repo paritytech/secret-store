@@ -17,5 +17,6 @@
 pub mod decryption_session;
 pub mod encryption_session;
 pub mod generation_session;
+pub mod random_point_generation_session;
 pub mod signing_session_ecdsa;
 pub mod signing_session_schnorr;

@@ -14,9 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with Parity Secret Store.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::collections::BTreeMap;
 use crypto::publickey::{Public, Secret, Signature, Random, Generator, ec_math_utils};
 use ethereum_types::{H256, U256, BigEndianHash};
 use hash::keccak;
+use tiny_keccak::Keccak;
 use key_server_cluster::Error;
 
 /// Encryption result.
@@ -118,11 +120,6 @@ pub fn compute_shadow_mul<'a, I>(coeff: &Secret, self_secret: &Secret, mut other
 	Ok(shadow_mul)
 }
 
-/// Update point by multiplying to random scalar
-pub fn update_random_point(point: &mut Public) -> Result<(), Error> {
-	Ok(ec_math_utils::public_mul_secret(point, &generate_random_scalar()?)?)
-}
-
 /// Generate random polynom of threshold degree
 pub fn generate_random_polynom(threshold: usize) -> Result<Vec<Secret>, Error> {
 	(0..threshold + 1)
@@ -201,6 +198,36 @@ pub fn keys_verification(threshold: usize, derived_point: &Public, number_id: &S
 	}
 
 	Ok(left == right)
+}
+
+/// Verifies that public share proof is valid.
+pub fn share_proof_verification(threshold: usize, number_id: &Secret, secret1: &Secret, share_proof: &[Public]) -> Result<bool, Error> {
+	// calculate left part
+	let mut left = ec_math_utils::generation_point();
+	ec_math_utils::public_mul_secret(&mut left, secret1)?;
+
+	// calculate right part
+	let mut right = share_proof[0].clone();
+	for i in 1..threshold + 1 {
+		let mut secret_pow = number_id.clone();
+		secret_pow.pow(i)?;
+
+		let mut public_k = share_proof[i].clone();
+		ec_math_utils::public_mul_secret(&mut public_k, &secret_pow)?;
+
+		ec_math_utils::public_add(&mut right, &public_k)?;
+	}
+
+	Ok(left == right)
+}
+
+/// Prepares public share proof.
+pub fn prepare_share_proof(polynom1: &[Secret]) -> Result<Vec<Public>, Error> {
+	let mut share_proof = Vec::with_capacity(polynom1.len());
+	for coeff in polynom1 {
+		share_proof.push(compute_public_share(coeff)?);
+	}
+	Ok(share_proof)
 }
 
 /// Compute secret subshare from passed secret value.
@@ -534,6 +561,21 @@ pub fn compute_ecdsa_inversed_secret_coeff_from_shares(t: usize, id_numbers: &[S
 	let mut u_inv = u;
 	invert_secret(&mut u_inv)?;
 	Ok(u_inv)
+}
+
+/// Computes footprint of all publics received from all nodes.
+pub fn compute_publics_footprint(nodes: BTreeMap<Public, Vec<Public>>) -> Result<H256, Error> {
+	let mut publics_keccak = Keccak::new_keccak256();
+	for (_, publics) in nodes {
+		for public in publics {
+			publics_keccak.update(public.as_bytes());
+		}
+	}
+
+	let mut publics_keccak_value = [0u8; 32];
+	publics_keccak.finalize(&mut publics_keccak_value);
+
+	Ok(publics_keccak_value.into())
 }
 
 #[cfg(test)]
@@ -1098,5 +1140,4 @@ pub mod tests {
 			Secret::from_str("0000000000000000000000000000000000000000000000000000000000000001").unwrap()
 		);
 	}
-
 }

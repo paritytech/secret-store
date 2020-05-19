@@ -141,7 +141,7 @@ struct NodeData {
 	pub public_share: Option<Public>,
 
 	// === Values, filled during completion phase ===
-	/// Flahs marking that node has confirmed key joint public compution.
+	/// Flags marking that node has confirmed key joint public compution.
 	pub joint_computed: bool,
 	/// Flags marking that node has confirmed session completion (generated key is stored).
 	pub completion_confirmed: bool,

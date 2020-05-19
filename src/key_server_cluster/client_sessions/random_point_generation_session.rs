@@ -105,6 +105,13 @@ impl SessionImpl {
 		self.result.clone()
 	}
 
+	/// 'Complete' session with given point. To be used in tests only.
+	#[cfg(test)]
+	pub fn complete_with(&mut self, point: Public) {
+		self.result = Some(point);
+		self.state = SessionState::Finished;
+	}
+
 	/// Starts this session.
 	pub fn start(&mut self, nodes: BTreeSet<NodeId>) -> Result<(), Error> {
 		match self.state {

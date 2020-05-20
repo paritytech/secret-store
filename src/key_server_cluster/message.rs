@@ -67,16 +67,27 @@ pub enum GenerationMessage {
 	InitializeSession(InitializeSession),
 	/// Confirm DKG session initialization.
 	ConfirmInitialization(ConfirmInitialization),
-	/// Broadcast data, calculated during session initialization phase.
-	CompleteInitialization(CompleteInitialization),
+	/// Confirm DKG session initialization.
+	DerivedPointGeneration(DerivedPointGeneration),
 	/// Generated keys are sent to every node.
 	KeysDissemination(KeysDissemination),
 	/// Broadcast self public key portion.
 	PublicKeyShare(PublicKeyShare),
+	/// Confirm that the joint public key has been computed.
+	JointPublicKey(JointPublicKey),
 	/// When session error has occured.
 	SessionError(SessionError),
 	/// When session is completed.
 	SessionCompleted(SessionCompleted),
+}
+
+/// Random point generation message.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum RandomPointGenerationMessage {
+	/// Encrypted share from the node.
+	EncryptedShare(RandomPointGenerationEncryptedShare),
+	/// Share decryption key from the node.
+	DecryptionKey(RandomPointGenerationDecryptionKey),
 }
 
 /// All possible messages that can be sent during encryption session.
@@ -283,11 +294,6 @@ pub struct InitializeSession {
 	/// Decryption threshold. During decryption threshold-of-route.len() nodes must came to
 	/// consensus to successfully decrypt message.
 	pub threshold: usize,
-	/// Derived generation point. Starting from originator, every node must multiply this
-	/// point by random scalar (unknown by other nodes). At the end of initialization
-	/// `point` will be some (k1 * k2 * ... * kn) * G = `point` where `(k1 * k2 * ... * kn)`
-	/// is unknown for every node.
-	pub derived_point: SerializablePublic,
 }
 
 /// Confirm DKG session initialization.
@@ -297,19 +303,18 @@ pub struct ConfirmInitialization {
 	pub session: MessageSessionId,
 	/// Session-level nonce.
 	pub session_nonce: u64,
-	/// Derived generation point.
-	pub derived_point: SerializablePublic,
 }
+
 
 /// Broadcast generated point to every other node.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CompleteInitialization {
+pub struct DerivedPointGeneration {
 	/// Session Id.
 	pub session: MessageSessionId,
 	/// Session-level nonce.
 	pub session_nonce: u64,
-	/// Derived generation point.
-	pub derived_point: SerializablePublic,
+	/// Wrapped random point generation message.
+	pub message: RandomPointGenerationMessage,
 }
 
 /// Generated keys are sent to every node.
@@ -334,8 +339,21 @@ pub struct PublicKeyShare {
 	pub session: MessageSessionId,
 	/// Session-level nonce.
 	pub session_nonce: u64,
-	/// Public key share.
-	pub public_share: SerializablePublic,
+	/// Hash of all publics received from all nodes.
+	pub publics_footprint: SerializableH256,
+	/// Public key share proof.
+	pub public_share_proof: Vec<SerializablePublic>,
+}
+
+/// Node is sharing joint public key that it has computed.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct JointPublicKey {
+	/// Session Id.
+	pub session: MessageSessionId,
+	/// Session-level nonce.
+	pub session_nonce: u64,
+	/// Public key that has been computed from all nodes public shares.
+	pub joint_public_footprint: SerializableH256,
 }
 
 /// When session error has occured.
@@ -1062,6 +1080,20 @@ pub enum FailedKeyVersionContinueAction {
 	Decrypt(Option<SerializableAddress>, SerializableAddress),
 }
 
+/// Encrypted share from the node.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RandomPointGenerationEncryptedShare {
+	/// Encrypted share.
+	pub encrypted_share: Vec<u8>,
+}
+
+/// Share decryption key from the node.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RandomPointGenerationDecryptionKey {
+	/// Decryption key.
+	pub decryption_key: SerializableSecret,
+}
+
 impl Message {
 	pub fn is_initialization_message(&self) -> bool {
 		match *self {
@@ -1143,9 +1175,10 @@ impl GenerationMessage {
 		match *self {
 			GenerationMessage::InitializeSession(ref msg) => &msg.session,
 			GenerationMessage::ConfirmInitialization(ref msg) => &msg.session,
-			GenerationMessage::CompleteInitialization(ref msg) => &msg.session,
+			GenerationMessage::DerivedPointGeneration(ref msg) => &msg.session,
 			GenerationMessage::KeysDissemination(ref msg) => &msg.session,
 			GenerationMessage::PublicKeyShare(ref msg) => &msg.session,
+			GenerationMessage::JointPublicKey(ref msg) => &msg.session,
 			GenerationMessage::SessionError(ref msg) => &msg.session,
 			GenerationMessage::SessionCompleted(ref msg) => &msg.session,
 		}
@@ -1155,9 +1188,10 @@ impl GenerationMessage {
 		match *self {
 			GenerationMessage::InitializeSession(ref msg) => msg.session_nonce,
 			GenerationMessage::ConfirmInitialization(ref msg) => msg.session_nonce,
-			GenerationMessage::CompleteInitialization(ref msg) => msg.session_nonce,
+			GenerationMessage::DerivedPointGeneration(ref msg) => msg.session_nonce,
 			GenerationMessage::KeysDissemination(ref msg) => msg.session_nonce,
 			GenerationMessage::PublicKeyShare(ref msg) => msg.session_nonce,
+			GenerationMessage::JointPublicKey(ref msg) => msg.session_nonce,
 			GenerationMessage::SessionError(ref msg) => msg.session_nonce,
 			GenerationMessage::SessionCompleted(ref msg) => msg.session_nonce,
 		}
@@ -1423,9 +1457,10 @@ impl fmt::Display for GenerationMessage {
 		match *self {
 			GenerationMessage::InitializeSession(_) => write!(f, "InitializeSession"),
 			GenerationMessage::ConfirmInitialization(_) => write!(f, "ConfirmInitialization"),
-			GenerationMessage::CompleteInitialization(_) => write!(f, "CompleteInitialization"),
+			GenerationMessage::DerivedPointGeneration(ref msg) => write!(f, "DerivedPointGeneration({})", msg.message),
 			GenerationMessage::KeysDissemination(_) => write!(f, "KeysDissemination"),
 			GenerationMessage::PublicKeyShare(_) => write!(f, "PublicKeyShare"),
+			GenerationMessage::JointPublicKey(_) => write!(f, "JointPublicKey"),
 			GenerationMessage::SessionError(ref msg) => write!(f, "SessionError({})", msg.error),
 			GenerationMessage::SessionCompleted(_) => write!(f, "SessionCompleted"),
 		}
@@ -1552,6 +1587,15 @@ impl fmt::Display for KeyVersionNegotiationMessage {
 			KeyVersionNegotiationMessage::RequestKeyVersions(_) => write!(f, "RequestKeyVersions"),
 			KeyVersionNegotiationMessage::KeyVersions(_) => write!(f, "KeyVersions"),
 			KeyVersionNegotiationMessage::KeyVersionsError(_) => write!(f, "KeyVersionsError"),
+		}
+	}
+}
+
+impl fmt::Display for RandomPointGenerationMessage {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match *self {
+			RandomPointGenerationMessage::EncryptedShare(_) => write!(f, "EncryptedShare"),
+			RandomPointGenerationMessage::DecryptionKey(_) => write!(f, "DecryptionKey"),
 		}
 	}
 }

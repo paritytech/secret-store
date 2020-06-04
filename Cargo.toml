@@ -13,9 +13,9 @@ ethabi-derive = "12.0"
 ethereum-types = "0.9.0"
 futures = "0.1"
 hyper = { version = "0.12", default-features = false }
-keccak-hash = "0.5.1"
-kvdb = "0.6.0"
-kvdb-rocksdb = "0.8.0"
+keccak-hash = "0.5.0"
+kvdb = "0.5.0"
+kvdb-rocksdb = "0.7.0"
 lazy_static = "1.0"
 libsecp256k1 = { version = "0.3.5", default-features = false }
 log = "0.4"

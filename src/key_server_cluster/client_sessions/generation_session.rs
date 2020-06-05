@@ -1070,7 +1070,7 @@ pub mod tests {
 	use ethereum_types::H256;
 	use crypto::publickey::{Random, Generator, KeyPair, Secret};
 	use key_server_cluster::{NodeId, Error, KeyStorage, SessionId};
-	use key_server_cluster::message::{self, KeysDissemination, PublicKeyShare, ConfirmInitialization};
+	use key_server_cluster::message::{self, KeysDissemination, PublicKeyShare, JointPublicKey, ConfirmInitialization};
 	use key_server_cluster::cluster::tests::{MessageLoop as ClusterMessageLoop, make_clusters_and_preserve_sessions};
 	use key_server_cluster::cluster_sessions::ClusterSession;
 	use key_server_cluster::generation_session::{SessionImpl, SessionState};
@@ -1241,6 +1241,212 @@ pub mod tests {
 						],
 					}),
 			Err(Error::InvalidMessage),
+		);
+	}
+
+	fn process_keys_dissemination(same_derived_point: bool) -> Result<(), Error> {
+		// nodes are 'connecting' fo generate 2-of-2 key
+		let threshold = 1;
+		let ml = MessageLoop::new(2).init(threshold).unwrap();
+
+		// let's say node0 is in state when it waits for the last KeysDissemination
+		// message from the node1
+		let id_number0 = ml.nodes_id_numbers()[0].clone();
+		let derived_point_on_0 = math::generate_random_point().unwrap();
+		let derived_point_on_1 = if same_derived_point {
+			derived_point_on_0
+		} else {
+			math::generate_random_point().unwrap()
+		};
+		let polynom1_on_1 = math::generate_random_polynom(threshold).unwrap();
+		let polynom2_on_1 = math::generate_random_polynom(threshold).unwrap();
+		let secret1_from_1_to_0 = math::compute_polynom(&polynom1_on_1, &id_number0).unwrap();
+		let secret2_from_1_to_0 = math::compute_polynom(&polynom2_on_1, &id_number0).unwrap();
+		let publics = math::public_values_generation(
+			threshold,
+			&derived_point_on_1,
+			&polynom1_on_1,
+			&polynom2_on_1,
+		).unwrap();
+
+		{
+			let node0 = ml.0.node(0);
+			let session = ml.session_of(&ml.0.node(0));
+			let mut data = session.data.lock();
+			data.state = SessionState::WaitingForKeysDissemination;
+			data.secret_coeff = Some(math::generate_random_scalar().unwrap());
+			data.polynom1 = Some(math::generate_random_polynom(threshold).unwrap());
+			data.nodes.get_mut(&node0).unwrap().secret1 = Some(math::generate_random_scalar().unwrap());
+			data.nodes.get_mut(&node0).unwrap().secret2 = Some(math::generate_random_scalar().unwrap());
+			data.nodes.get_mut(&node0).unwrap().publics = Some(Vec::new());
+			data.derived_point_generation.complete_with(derived_point_on_0);
+		}
+
+		// receive last KeysDissemination message
+		ml.session_of(&ml.0.node(0))
+			.on_keys_dissemination(
+				ml.0.node(1),
+				&KeysDissemination {
+					session: SessionId::from([1u8; 32]).into(),
+					session_nonce: 0,
+					secret1: secret1_from_1_to_0.into(),
+					secret2: secret2_from_1_to_0.into(),
+					publics: publics.into_iter().map(Into::into).collect(),
+				})
+	}
+
+	#[test]
+	fn fails_to_accept_keys_dissemination_with_wrong_derived_point() {
+		// when node1 had the different derived_point than the node0,
+		// key verification fails
+		assert_eq!(
+			process_keys_dissemination(false),
+			Err(Error::InvalidMessage),
+		);
+	}
+
+	#[test]
+	fn accepts_keys_dissemination_with_correct_derived_point() {
+		// when both nodes have used the same derived_point,
+		// key verification succeeds
+		assert_eq!(
+			process_keys_dissemination(true),
+			Ok(()),
+		);
+	}
+
+	fn process_public_key_share(valid_proof: bool, valid_footprint: bool) -> Result<(), Error> {
+		// nodes are connecting to generate 2-of-3 key
+		let threshold = 1;
+		let ml = MessageLoop::new(3).init(threshold).unwrap();
+
+		// let's say node0 is in state when it waits for the first PublicKeyShare
+		// message from the node1
+		let id_number0 = ml.nodes_id_numbers()[0].clone();
+		let derived_point = math::generate_random_point().unwrap();
+		let publics_from_0_to_0 = vec![
+			math::generate_random_point().unwrap(),
+			math::generate_random_point().unwrap(),
+		];
+		let publics_from_1_to_0 = vec![
+			math::generate_random_point().unwrap(),
+			math::generate_random_point().unwrap(),
+		];
+		let polynom1_on_1 = math::generate_random_polynom(threshold).unwrap();
+		let secret_from_1_to_0 = math::compute_polynom(&polynom1_on_1, &id_number0).unwrap();
+		{
+			let node0 = ml.0.node(0);
+			let node1 = ml.0.node(1);
+			let session = ml.session_of(&ml.0.node(0));
+			let mut data = session.data.lock();
+			data.state = SessionState::WaitingForPublicKeyShare;
+			data.secret_coeff = Some(math::generate_random_scalar().unwrap());
+			data.polynom1 = Some(math::generate_random_polynom(threshold).unwrap());
+			data.nodes.get_mut(&node0).unwrap().secret1 = Some(math::generate_random_scalar().unwrap());
+			data.nodes.get_mut(&node0).unwrap().secret2 = Some(math::generate_random_scalar().unwrap());
+			data.nodes.get_mut(&node0).unwrap().publics = Some(publics_from_0_to_0);
+			data.nodes.get_mut(&node1).unwrap().secret1 = Some(secret_from_1_to_0);
+			data.nodes.get_mut(&node1).unwrap().secret2 = Some(math::generate_random_scalar().unwrap());
+			data.nodes.get_mut(&node1).unwrap().publics = Some(publics_from_1_to_0);
+			data.publics_footprint = Some([1u8; 32].into());
+			data.derived_point_generation.complete_with(derived_point);
+		}
+
+		// receive public key share from node1 to node0
+		let public_share_proof_from_1_to_0 = if valid_proof {
+			math::prepare_share_proof(&polynom1_on_1).unwrap()
+		} else {
+			(0..threshold+1).map(|_| math::generate_random_point().unwrap()).collect()
+		};
+		let publics_footprint_from_1_to_0 = if valid_footprint {
+			H256::from([1u8; 32])
+		} else {
+			H256::from([2u8; 32])
+		};
+		ml.session_of(&ml.0.node(0))
+			.on_public_key_share(
+				ml.0.node(1),
+				&PublicKeyShare {
+					session: SessionId::from([1u8; 32]).into(),
+					session_nonce: 0,
+					publics_footprint: publics_footprint_from_1_to_0.into(),
+					public_share_proof: public_share_proof_from_1_to_0.into_iter().map(Into::into).collect(),
+				})
+	}
+
+	#[test]
+	fn fails_to_accept_public_key_share_with_invalid_proof() {
+		// when node provide invalid public share proof
+		assert_eq!(
+			process_public_key_share(false, true),
+			Err(Error::InvalidMessage),
+		);
+	}
+
+	#[test]
+	fn fails_to_accept_public_key_share_with_invalid_publics_footprint() {
+		// when node has used different publics in its computations
+		assert_eq!(
+			process_public_key_share(true, false),
+			Err(Error::InvalidMessage),
+		);
+	}
+
+	#[test]
+	fn accepts_valid_public_key_share() {
+		// when node has provided valid public share proof + it has used same
+		// publics in its computations
+		assert_eq!(
+			process_public_key_share(true, true),
+			Ok(()),
+		);
+	}
+
+	fn process_joint_public_key(valid_footprint: bool) -> Result<(), Error> {
+		// nodes are connecting to generate 2-of-3 key
+		let threshold = 1;
+		let ml = MessageLoop::new(3).init(threshold).unwrap();
+
+		// let's say node0 is in state when it waits for the first JointPublicKey
+		// message from the node1
+		{
+			let session = ml.session_of(&ml.0.node(0));
+			let mut data = session.data.lock();
+			data.state = SessionState::WaitingForJointPublic;
+			data.joint_public_footprint = Some([1u8; 32].into());
+		}
+
+		// receive public key share from node1 to node0
+		let joint_public_footprint_from_1_to_0 = if valid_footprint {
+			H256::from([1u8; 32])
+		} else {
+			H256::from([2u8; 32])
+		};
+		ml.session_of(&ml.0.node(0))
+			.on_joint_public_key(
+				ml.0.node(1),
+				&JointPublicKey {
+					session: SessionId::from([1u8; 32]).into(),
+					session_nonce: 0,
+					joint_public_footprint: joint_public_footprint_from_1_to_0.into(),
+				})
+	}
+
+	#[test]
+	fn fails_to_accept_joint_public_key_with_invalid_footprint() {
+		// when node has received different shares from other nodes
+		assert_eq!(
+			process_joint_public_key(false),
+			Err(Error::InvalidMessage),
+		);
+	}
+
+	#[test]
+	fn accepts_joint_public_key_with_valid_footprint() {
+		// when node has received same shares from other nodes
+		assert_eq!(
+			process_joint_public_key(true),
+			Ok(()),
 		);
 	}
 
